@@ -1,0 +1,7 @@
+pandas
+numpy
+yfinance
+pydantic>=2,<3
+rich
+requests
+pytest

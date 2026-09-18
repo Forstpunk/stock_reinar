@@ -72,13 +72,14 @@ def main(argv: list[str] | None = None) -> int:
         if bool(args.universe) == bool(args.full_market):
             raise ValueError("specify exactly one of --universe PATH or --full-market")
         if args.full_market:
-            console.print(
-                "[bold yellow]Fetching the full live NSE equity list... this covers "
-                "~2000 symbols and will take a while, especially with fundamentals "
-                "enabled (one network call per symbol). Consider --skip-fundamentals "
-                "for a full-market run.[/bold yellow]"
-            )
+            console.print("[bold]Fetching the live NSE equity list...[/bold]")
             symbols = fetch_full_nse_universe()
+            console.print(
+                f"[bold yellow]{len(symbols)} EQ-series symbols fetched. Screening all "
+                "of them will take a while, especially with fundamentals enabled (one "
+                "network call per symbol) -- consider --skip-fundamentals for a "
+                "full-market run.[/bold yellow]"
+            )
         else:
             symbols = _read_universe(args.universe)
     except Exception as exc:

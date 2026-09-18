@@ -4,13 +4,9 @@ An alternative to hand-maintaining ``universe.txt``: fetches NSE's own
 published master list of listed equities and returns every symbol in the
 "EQ" (mainboard, normal trading) series.
 
-NSE's website sits behind Akamai bot mitigation and is known to block
-requests from many data-center / cloud IP ranges outright, independent of
-headers, session cookies, or request shape. This module does nothing to
-evade that. If the fetch is blocked or fails for any reason, it raises
-``NSEUniverseFetchError`` rather than silently falling back to a stale or
-partial list -- if this keeps failing, run it from a normal residential
-or office network instead of a cloud sandbox.
+NSE publishes this list as a plain CSV under ``nsearchives.nseindia.com``;
+a simple GET with a normal browser User-Agent is sufficient, no session
+cookies or homepage visit required.
 """
 
 from __future__ import annotations
@@ -20,14 +16,13 @@ import io
 
 import requests
 
-EQUITY_LIST_URL = "https://nsearchives.nseindia.com/content/equity/EQUITY_L.csv"
-_HOME_URL = "https://www.nseindia.com"
+EQUITY_LIST_URL = "https://nsearchives.nseindia.com/content/equities/EQUITY_L.csv"
 _HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
         "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     ),
-    "Accept-Language": "en-US,en;q=0.9",
+    "Accept": "text/csv",
 }
 
 
@@ -38,20 +33,11 @@ class NSEUniverseFetchError(Exception):
 def fetch_full_nse_universe(timeout_seconds: int = 20) -> list[str]:
     """Fetch every currently NSE-listed, EQ-series equity as bare symbols.
 
-    Visits the NSE homepage first to pick up the session cookies its CDN
-    expects, then requests the published equity-list CSV in the same
-    session -- the standard approach for reaching this endpoint. Raises
-    ``NSEUniverseFetchError`` on any network failure, non-200 response, or
-    a response that doesn't parse as the expected CSV.
+    Raises ``NSEUniverseFetchError`` on any network failure, non-200
+    response, or a response that doesn't parse as the expected CSV.
     """
-    session = requests.Session()
-    session.headers.update(_HEADERS)
-
     try:
-        session.get(_HOME_URL, timeout=timeout_seconds)
-        response = session.get(
-            EQUITY_LIST_URL, timeout=timeout_seconds, headers={"Accept": "text/csv"}
-        )
+        response = requests.get(EQUITY_LIST_URL, headers=_HEADERS, timeout=timeout_seconds)
     except requests.RequestException as exc:
         raise NSEUniverseFetchError(
             f"could not reach NSE to fetch the equity list: {exc}"
@@ -61,9 +47,7 @@ def fetch_full_nse_universe(timeout_seconds: int = 20) -> list[str]:
     if response.status_code != 200 or "csv" not in content_type.lower():
         raise NSEUniverseFetchError(
             f"NSE equity list fetch failed (HTTP {response.status_code}, "
-            f"content-type={content_type!r}). NSE commonly blocks requests "
-            "from data-center/cloud IP ranges; if this keeps failing, run "
-            "from a normal residential or office network connection."
+            f"content-type={content_type!r})"
         )
 
     reader = csv.DictReader(io.StringIO(response.text))

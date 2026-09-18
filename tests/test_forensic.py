@@ -105,3 +105,71 @@ def test_not_disqualified_at_one_flag_below_threshold():
     result = forensic_screen(current, prior, disqualify_flag_count=2)
     assert len(result.flags) == 1
     assert result.disqualified is False
+
+
+# -- Undefined ratios are absence of evidence, not evidence --------------------
+
+
+def _asset_light_pair():
+    """Debt-free, inventory-free services company: CFO > NI, positive earnings."""
+    base = dict(
+        symbol="T",
+        period_end=date(2025, 3, 31),
+        total_revenue=1000.0,
+        gross_profit=400.0,
+        net_income=100.0,
+        operating_cash_flow=150.0,
+        total_assets=2000.0,
+        total_equity=1000.0,
+        total_debt=0.0,
+        current_assets=500.0,
+        current_liabilities=250.0,
+        shares_outstanding=100.0,
+        accounts_receivable=100.0,
+        inventory=0.0,
+    )
+    prior = FundamentalData(**{**base, "period_end": date(2024, 3, 31)})
+    current = FundamentalData(**base)
+    return current, prior
+
+
+def test_debt_free_inventory_free_healthy_company_is_not_disqualified():
+    current, prior = _asset_light_pair()
+    result = forensic_screen(current, prior)
+    assert result.flags == []
+    assert result.disqualified is False
+    assert len(result.undefined_checks) == 2
+    assert any("inventory" in check for check in result.undefined_checks)
+    assert any("leverage" in check for check in result.undefined_checks)
+
+
+def test_zero_net_income_is_undefined_check_not_flag():
+    current, prior = _make({"net_income": 0.0})
+    result = forensic_screen(current, prior)
+    assert result.flags == []
+    assert result.disqualified is False
+    assert len(result.undefined_checks) == 1
+    assert "cfo_ni_ratio" in result.undefined_checks[0]
+
+
+def test_two_genuine_breaches_still_disqualify():
+    current, prior = _make({"operating_cash_flow": 50.0, "total_debt": 400.0})
+    result = forensic_screen(current, prior)
+    assert len(result.flags) == 2
+    assert result.undefined_checks == []
+    assert result.disqualified is True
+
+
+def test_one_genuine_flag_plus_three_undefined_checks_is_not_disqualified():
+    # Genuine breach: accruals far above cash flow (accrual_ratio > 0.10).
+    # Undefined: zero net income (cfo_ni), zero inventory both periods
+    # (inventory growth), zero debt both periods (leverage jump).
+    current, prior = _make(
+        {"net_income": 0.0, "operating_cash_flow": -200.0, "inventory": 0.0, "total_debt": 0.0},
+        {"inventory": 0.0, "total_debt": 0.0},
+    )
+    result = forensic_screen(current, prior)
+    assert len(result.flags) == 1
+    assert "accrual_ratio" in result.flags[0]
+    assert len(result.undefined_checks) == 3
+    assert result.disqualified is False

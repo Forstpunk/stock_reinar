@@ -56,3 +56,27 @@ def test_weighted_relative_strength_raises_when_score_would_be_nan():
     closes = pd.DataFrame({"AAA": _price_path(252, 0.001)})
     with pytest.raises(ValueError):
         weighted_relative_strength(closes)
+
+
+# -- The session requirement is derived from quarter_sessions, not trusted ----
+
+
+def test_exactly_252_sessions_rejected_by_length_check_naming_253():
+    closes = pd.DataFrame({"X": _price_path(252, 0.001)})
+    with pytest.raises(ValueError, match=r"requires at least 253 sessions"):
+        weighted_relative_strength(closes, min_sessions=252)
+
+
+def test_exactly_253_sessions_computes():
+    closes = pd.DataFrame({"X": _price_path(253, 0.001)})
+    result = weighted_relative_strength(closes, min_sessions=252)
+    assert not pd.isna(result["X"])
+
+
+def test_config_rejects_eligibility_below_data_validation_minimum():
+    from pydantic import ValidationError
+
+    from nse_screener.config import ScreenerConfig
+
+    with pytest.raises(ValidationError, match="eligibility_min_sessions"):
+        ScreenerConfig(eligibility_min_sessions=100)

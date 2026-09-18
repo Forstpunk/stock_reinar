@@ -27,6 +27,7 @@ from nse_screener.data import (
 from nse_screener.gate import evaluate_market_gate
 from nse_screener.ranking import build_momentum_only_shortlist, build_shortlist
 from nse_screener.report import RunMetadata, build_json_payload, print_report
+from nse_screener.tracker import TrackedEntry, TrackedRun, log_run
 from nse_screener.universe import fetch_full_nse_universe
 
 
@@ -59,6 +60,16 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         "--skip-fundamentals",
         action="store_true",
         help="Momentum + gate only. Skips quality/F-Score/forensic factors.",
+    )
+    parser.add_argument(
+        "--track",
+        type=Path,
+        default=None,
+        help=(
+            "Append this run's shortlist (symbol + entry price) to a log file. "
+            "Evaluate matured runs later with `python -m nse_screener.tracker "
+            "--log PATH`."
+        ),
     )
     return parser.parse_args(argv)
 
@@ -159,6 +170,25 @@ def main(argv: list[str] | None = None) -> int:
         )
         args.json.write_text(json.dumps(payload, indent=2, default=str))
         console.print(f"JSON report written to {args.json}")
+
+    if args.track is not None and shortlist.entries:
+        tracked_run = TrackedRun(
+            run_date=metadata.run_date,
+            gate_verdict=gate.verdict.value,
+            index_close_at_run=float(index_frame["Close"].sort_index().iloc[-1]),
+            holding_horizon_sessions=config.holding_horizon_sessions,
+            entries=[
+                TrackedEntry(
+                    symbol=entry.symbol,
+                    rank=rank,
+                    composite_score=entry.composite_score,
+                    entry_close=float(accepted_frames[entry.symbol]["Close"].sort_index().iloc[-1]),
+                )
+                for rank, entry in enumerate(shortlist.entries, start=1)
+            ],
+        )
+        log_run(tracked_run, args.track)
+        console.print(f"Logged {len(tracked_run.entries)} pick(s) to {args.track} for later evaluation.")
 
     if not shortlist.entries:
         console.print("[bold red]No symbols qualified for the shortlist.[/bold red]")

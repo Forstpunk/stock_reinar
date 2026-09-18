@@ -23,6 +23,10 @@ class ForensicResult(BaseModel):
     """Forensic screen outcome for one symbol.
 
     Flags indicate a need for investigation, not proven manipulation.
+    ``undefined_checks`` lists checks that could not be evaluated because a
+    denominator was zero (no debt, no inventory, zero net income). They are
+    reported for transparency only -- they are NOT evidence and never count
+    towards disqualification.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -36,6 +40,7 @@ class ForensicResult(BaseModel):
     cogs_growth_pp: float
     leverage_jump_pct: float
     flags: list[str]
+    undefined_checks: list[str]
     disqualified: bool
 
 
@@ -49,15 +54,24 @@ def forensic_screen(
     leverage_jump_fraction: float = 0.50,
     disqualify_flag_count: int = 2,
 ) -> ForensicResult:
-    """Run the five forensic flags and disqualify at ``disqualify_flag_count`` or more."""
+    """Run the five forensic flags and disqualify at ``disqualify_flag_count`` or more.
+
+    Only genuine threshold breaches are recorded in ``flags`` and counted
+    towards disqualification. A check whose ratio is undefined (zero
+    denominator -- e.g. a debt-free or inventory-free business) is recorded
+    in ``undefined_checks`` for transparency, but is an *inability to
+    evaluate*, not evidence of a problem, and never contributes to the
+    disqualification count.
+    """
     if current.total_assets <= 0:
         raise ValueError(f"{current.symbol}: total_assets must be positive, got {current.total_assets}")
 
     flags: list[str] = []
+    undefined_checks: list[str] = []
 
     if current.net_income == 0:
         cfo_ni_ratio = math.nan
-        flags.append("cfo_ni_ratio: net income is zero, ratio undefined")
+        undefined_checks.append("cfo_ni_ratio: net income is zero, ratio undefined")
     else:
         cfo_ni_ratio = current.operating_cash_flow / current.net_income
         if cfo_ni_ratio < cfo_ni_min:
@@ -71,7 +85,9 @@ def forensic_screen(
     prior_dso = _days_outstanding(prior.accounts_receivable, prior.total_revenue)
     dso_growth_pp = _growth_pp(current_dso, prior_dso)
     revenue_growth_pp = _growth_pp(current.total_revenue, prior.total_revenue)
-    if math.isnan(dso_growth_pp) or dso_growth_pp - revenue_growth_pp > dso_vs_revenue_growth_pp:
+    if math.isnan(dso_growth_pp) or math.isnan(revenue_growth_pp):
+        undefined_checks.append("dso_growth: revenue or receivables zero in a period, growth undefined")
+    elif dso_growth_pp - revenue_growth_pp > dso_vs_revenue_growth_pp:
         flags.append(
             f"dso_growth {dso_growth_pp:.1f}pp exceeds revenue_growth "
             f"{revenue_growth_pp:.1f}pp by more than {dso_vs_revenue_growth_pp:.1f}pp"
@@ -79,10 +95,9 @@ def forensic_screen(
 
     inventory_growth_pp = _growth_pp(current.inventory, prior.inventory)
     cogs_growth_pp = _growth_pp(current.cost_of_goods_sold, prior.cost_of_goods_sold)
-    if (
-        math.isnan(inventory_growth_pp)
-        or inventory_growth_pp - cogs_growth_pp > inventory_vs_cogs_growth_pp
-    ):
+    if math.isnan(inventory_growth_pp) or math.isnan(cogs_growth_pp):
+        undefined_checks.append("inventory_growth: inventory or COGS zero in prior period, growth undefined")
+    elif inventory_growth_pp - cogs_growth_pp > inventory_vs_cogs_growth_pp:
         flags.append(
             f"inventory_growth {inventory_growth_pp:.1f}pp exceeds cogs_growth "
             f"{cogs_growth_pp:.1f}pp by more than {inventory_vs_cogs_growth_pp:.1f}pp"
@@ -92,7 +107,7 @@ def forensic_screen(
     prior_de = _debt_to_equity(prior.total_debt, prior.total_equity)
     if math.isnan(current_de) or math.isnan(prior_de) or prior_de == 0:
         leverage_jump_pct = math.nan
-        flags.append("leverage_jump: debt-to-equity undefined in current or prior period")
+        undefined_checks.append("leverage_jump: debt-to-equity undefined in current or prior period")
     else:
         leverage_jump_pct = (current_de / prior_de - 1.0) * 100
         if current_de / prior_de - 1.0 > leverage_jump_fraction:
@@ -110,6 +125,7 @@ def forensic_screen(
         cogs_growth_pp=cogs_growth_pp,
         leverage_jump_pct=leverage_jump_pct,
         flags=flags,
+        undefined_checks=undefined_checks,
         disqualified=disqualified,
     )
 

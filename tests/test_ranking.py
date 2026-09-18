@@ -8,7 +8,7 @@ import pytest
 
 from nse_screener.config import ScreenerConfig
 from nse_screener.data import FundamentalData
-from nse_screener.ranking import build_shortlist
+from nse_screener.ranking import build_momentum_only_shortlist, build_shortlist
 
 _PRIOR_BASE = dict(
     period_end=date(2023, 3, 31),
@@ -71,12 +71,12 @@ def config() -> ScreenerConfig:
 
 def test_build_shortlist_filters_and_ranks(config: ScreenerConfig):
     price_frames = {
-        "GOOD1": _price_frame(260, daily_return=0.002, volume=300_000.0),
-        "GOOD2": _price_frame(260, daily_return=0.001, volume=300_000.0),
+        "GOOD1": _price_frame(320, daily_return=0.002, volume=300_000.0),
+        "GOOD2": _price_frame(320, daily_return=0.001, volume=300_000.0),
         "THIN": _price_frame(100, daily_return=0.002, volume=300_000.0),
-        "ILLIQUID": _price_frame(260, daily_return=0.002, volume=1_000.0),
-        "NOFUND": _price_frame(260, daily_return=0.002, volume=300_000.0),
-        "BAD": _price_frame(260, daily_return=0.002, volume=300_000.0),
+        "ILLIQUID": _price_frame(320, daily_return=0.002, volume=1_000.0),
+        "NOFUND": _price_frame(320, daily_return=0.002, volume=300_000.0),
+        "BAD": _price_frame(320, daily_return=0.002, volume=300_000.0),
     }
     fundamentals = {
         "GOOD1": _fundamentals("GOOD1"),
@@ -105,8 +105,8 @@ def test_build_shortlist_filters_and_ranks(config: ScreenerConfig):
 
 def test_composite_score_arithmetic(config: ScreenerConfig):
     price_frames = {
-        "GOOD1": _price_frame(260, daily_return=0.002, volume=300_000.0),
-        "GOOD2": _price_frame(260, daily_return=0.001, volume=300_000.0),
+        "GOOD1": _price_frame(320, daily_return=0.002, volume=300_000.0),
+        "GOOD2": _price_frame(320, daily_return=0.001, volume=300_000.0),
     }
     fundamentals = {
         "GOOD1": _fundamentals("GOOD1"),
@@ -139,4 +139,67 @@ def test_shortlist_never_padded_when_nothing_qualifies(config: ScreenerConfig):
 
     assert shortlist.entries == []
     assert shortlist.qualifying_count == 0
+    assert shortlist.shortfall_note is not None
+
+
+# -- One momentum-uncomputable symbol must not abort the run ------------------
+
+
+def _sparse_close_frame(n_valid: int, session_count: int = 400) -> pd.DataFrame:
+    """Frame whose row count passes eligibility but whose *valid* Close count may not.
+
+    Close is NaN for the first ``session_count - n_valid`` rows while Volume
+    is not, so ``dropna(how="all")`` keeps every row and only the momentum
+    computation discovers the shortfall.
+    """
+    dates = pd.bdate_range("2023-01-02", periods=session_count)
+    close = pd.Series(np.linspace(100, 200, session_count), index=dates)
+    close.iloc[: session_count - n_valid] = np.nan
+    return pd.DataFrame(
+        {"Open": 100.0, "High": close * 1.01, "Low": close * 0.99, "Close": close, "Volume": 1e7},
+        index=dates,
+    )
+
+
+def test_one_momentum_uncomputable_symbol_is_excluded_not_fatal(config: ScreenerConfig):
+    price_frames = {"GOOD": _sparse_close_frame(400), "THIN": _sparse_close_frame(200)}
+    fundamentals = {"GOOD": _fundamentals("GOOD"), "THIN": _fundamentals("THIN")}
+
+    shortlist = build_shortlist(price_frames, fundamentals, config, top_n=5)
+
+    assert [entry.symbol for entry in shortlist.entries] == ["GOOD"]
+    assert shortlist.excluded_count["momentum_uncomputable"] == 1
+    assert shortlist.qualifying_count == 1
+
+
+def test_all_symbols_momentum_uncomputable_gives_empty_shortlist(config: ScreenerConfig):
+    price_frames = {"THIN1": _sparse_close_frame(200), "THIN2": _sparse_close_frame(150)}
+    fundamentals = {"THIN1": _fundamentals("THIN1"), "THIN2": _fundamentals("THIN2")}
+
+    shortlist = build_shortlist(price_frames, fundamentals, config, top_n=5)
+
+    assert shortlist.entries == []
+    assert shortlist.qualifying_count == 0
+    assert shortlist.excluded_count["momentum_uncomputable"] == 2
+    assert shortlist.shortfall_note is not None
+
+
+def test_momentum_only_path_excludes_uncomputable_symbol(config: ScreenerConfig):
+    price_frames = {"GOOD": _sparse_close_frame(400), "THIN": _sparse_close_frame(200)}
+
+    shortlist = build_momentum_only_shortlist(price_frames, config, top_n=5)
+
+    assert [entry.symbol for entry in shortlist.entries] == ["GOOD"]
+    assert shortlist.excluded_count["momentum_uncomputable"] == 1
+    assert shortlist.fundamentals_included is False
+
+
+def test_momentum_only_path_all_uncomputable_gives_empty_shortlist(config: ScreenerConfig):
+    price_frames = {"THIN1": _sparse_close_frame(200), "THIN2": _sparse_close_frame(150)}
+
+    shortlist = build_momentum_only_shortlist(price_frames, config, top_n=5)
+
+    assert shortlist.entries == []
+    assert shortlist.qualifying_count == 0
+    assert shortlist.excluded_count["momentum_uncomputable"] == 2
     assert shortlist.shortfall_note is not None

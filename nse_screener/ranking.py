@@ -118,12 +118,30 @@ def build_shortlist(
         )
 
     closes = pd.DataFrame({symbol: price_frames[symbol]["Close"] for symbol in eligible_symbols})
-    rs_series = weighted_relative_strength(
-        closes,
-        quarter_sessions=config.momentum_quarter_sessions,
-        weights=config.momentum_weights,
-        min_sessions=config.momentum_min_sessions,
-    )
+    rs_values: dict[str, float] = {}
+    for symbol in eligible_symbols:
+        try:
+            rs_values[symbol] = float(
+                weighted_relative_strength(
+                    closes[[symbol]],
+                    quarter_sessions=config.momentum_quarter_sessions,
+                    weights=config.momentum_weights,
+                    min_sessions=config.momentum_min_sessions,
+                ).iloc[0]
+            )
+        except ValueError:
+            excluded_count["momentum_uncomputable"] += 1
+    eligible_symbols = [s for s in eligible_symbols if s in rs_values]
+    if not eligible_symbols:
+        return Shortlist(
+            entries=[],
+            requested_top_n=top_n,
+            qualifying_count=0,
+            excluded_count=dict(excluded_count),
+            disqualified=disqualified,
+            shortfall_note="no symbols passed eligibility filters",
+        )
+    rs_series = pd.Series(rs_values, name="weighted_rs")
 
     f_scores: dict[str, FScoreResult] = {}
     gp_values: dict[str, float] = {}
@@ -239,12 +257,31 @@ def build_momentum_only_shortlist(
         )
 
     closes = pd.DataFrame({symbol: price_frames[symbol]["Close"] for symbol in eligible_symbols})
-    rs_series = weighted_relative_strength(
-        closes,
-        quarter_sessions=config.momentum_quarter_sessions,
-        weights=config.momentum_weights,
-        min_sessions=config.momentum_min_sessions,
-    )
+    rs_values: dict[str, float] = {}
+    for symbol in eligible_symbols:
+        try:
+            rs_values[symbol] = float(
+                weighted_relative_strength(
+                    closes[[symbol]],
+                    quarter_sessions=config.momentum_quarter_sessions,
+                    weights=config.momentum_weights,
+                    min_sessions=config.momentum_min_sessions,
+                ).iloc[0]
+            )
+        except ValueError:
+            excluded_count["momentum_uncomputable"] += 1
+    eligible_symbols = [s for s in eligible_symbols if s in rs_values]
+    if not eligible_symbols:
+        return Shortlist(
+            entries=[],
+            requested_top_n=top_n,
+            qualifying_count=0,
+            excluded_count=dict(excluded_count),
+            disqualified={},
+            fundamentals_included=False,
+            shortfall_note="no symbols passed eligibility filters",
+        )
+    rs_series = pd.Series(rs_values, name="weighted_rs")
     rs_pct = rs_series.rank(pct=True)
 
     entries: list[ShortlistEntry] = []

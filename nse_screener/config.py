@@ -57,7 +57,7 @@ class ScreenerConfig(BaseModel):
     # -- Eligibility / liquidity (ranking.py) --------------------------------
     min_avg_traded_value_crore: float = 25.0
     liquidity_window_sessions: int = 50
-    eligibility_min_sessions: int = 252
+    eligibility_min_sessions: int = 300
     fundamentals_min_years: int = 2
 
     # -- Composite ranking weights (ranking.py) ------------------------------
@@ -116,4 +116,16 @@ class ScreenerConfig(BaseModel):
         )
         if abs(total - 1.0) > 1e-9:
             raise ValueError("composite ranking weights must sum to 1.0")
+        return self
+
+    @model_validator(mode="after")
+    def _eligibility_not_looser_than_integrity(self) -> "ScreenerConfig":
+        if self.eligibility_min_sessions < self.min_sessions:
+            raise ValueError(
+                "eligibility_min_sessions cannot be lower than min_sessions "
+                f"({self.eligibility_min_sessions} < {self.min_sessions}): every "
+                "symbol accepted by data-integrity validation already has at "
+                "least min_sessions of history, so a lower eligibility floor "
+                "would be silently unenforceable and just misleading config"
+            )
         return self

@@ -30,21 +30,24 @@ def weighted_relative_strength(
 
     ``closes`` must have one column per symbol, indexed by date, with no
     gaps left unhandled by the caller (see ``data.validate_price_data``).
-    Raises ``ValueError`` naming the symbol if it has fewer than
-    ``min_sessions`` sessions of history, or if the score cannot be
-    computed without NaN propagation.
+    ``min_sessions`` is a floor only: the formula itself needs
+    ``4 * quarter_sessions + 1`` sessions (the oldest term looks back four
+    full quarters), so the effective requirement is the larger of the two.
+    Raises ``ValueError`` naming the symbol if it has fewer sessions than
+    that, or if the score cannot be computed without NaN propagation.
     """
     if weights[0] < weights[1] or weights[0] < weights[2] or weights[0] < weights[3]:
         raise ValueError("the most recent quarter must be weighted at least as heavily as the others")
 
     w1, w2, w3, w4 = weights
+    required = max(min_sessions, 4 * quarter_sessions + 1)
     scores: dict[str, float] = {}
 
     for symbol in closes.columns:
         series = closes[symbol].dropna().sort_index()
-        if len(series) < min_sessions:
+        if len(series) < required:
             raise ValueError(
-                f"{symbol}: requires at least {min_sessions} sessions of "
+                f"{symbol}: requires at least {required} sessions of "
                 f"history for relative strength, got {len(series)}"
             )
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from nse_screener.workbench.valuation import apply_graham_label, value_range
+from nse_screener.workbench.valuation import UNSTABLE_WACC_MARGIN, apply_graham_label, value_range
 
 _SCENARIOS = {"conservative": 0.02, "base": 0.05, "optimistic": 0.08}
 
@@ -73,6 +73,49 @@ def test_raises_when_scenario_growth_exceeds_wacc():
             scenarios={**_SCENARIOS, "aggressive": 0.12},
             net_debt=200.0, shares=100.0, current_price=15.0,
         )
+
+
+def test_no_scenario_flagged_unstable_when_all_comfortably_below_wacc():
+    result = _range(current_price=15.0)  # wacc=0.10, max scenario growth=0.08
+    assert result.unstable_scenarios == []
+
+
+def test_scenario_within_margin_of_wacc_is_flagged_unstable():
+    scenarios = {
+        "conservative": 0.02,
+        "base": 0.05,
+        "optimistic": 0.10 - UNSTABLE_WACC_MARGIN + 0.001,
+    }
+    result = value_range(
+        symbol="AAA", nopat=100.0, roic=0.20, wacc=0.10, scenarios=scenarios,
+        net_debt=200.0, shares=100.0, current_price=15.0,
+    )
+    assert result.unstable_scenarios == ["optimistic"]
+    # the value is still computed and present, just flagged, not hidden or rejected
+    assert "optimistic" in result.per_share_values
+
+
+def test_scenario_at_exactly_the_margin_boundary_is_not_flagged():
+    scenarios = {"conservative": 0.02, "base": 0.05, "optimistic": 0.10 - UNSTABLE_WACC_MARGIN}
+    result = value_range(
+        symbol="AAA", nopat=100.0, roic=0.20, wacc=0.10, scenarios=scenarios,
+        net_debt=200.0, shares=100.0, current_price=15.0,
+    )
+    assert result.unstable_scenarios == []
+
+
+def test_value_range_loads_from_json_missing_unstable_scenarios_field():
+    # Regression test: a session persisted before unstable_scenarios existed
+    # must still load -- this is exactly what broke a real saved session.
+    from nse_screener.workbench.valuation import ValueRange
+
+    old_schema_json = (
+        '{"symbol": "AAA", "per_share_values": {"base": 10.0}, "low": 10.0, '
+        '"high": 10.0, "current_price": 8.0, "price_position": "BELOW_RANGE", '
+        '"discount_to_low": 0.2}'
+    )
+    result = ValueRange.model_validate_json(old_schema_json)
+    assert result.unstable_scenarios == []
 
 
 def test_graham_label_defaults_to_none():

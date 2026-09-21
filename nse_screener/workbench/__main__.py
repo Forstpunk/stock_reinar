@@ -406,12 +406,20 @@ def cmd_value(args: argparse.Namespace, console: Console) -> None:
     table.add_column("Scenario")
     table.add_column("Per-share value")
     for name, v in result.per_share_values.items():
-        table.add_row(name, f"{v:.2f}")
+        flag = " [UNSTABLE]" if name in result.unstable_scenarios else ""
+        table.add_row(name + flag, f"{v:.2f}")
     console.print(table)
     console.print(
         f"Range: {result.low:.2f} - {result.high:.2f}. "
         f"Current price: {result.current_price:.2f} ({result.price_position})"
     )
+    if result.unstable_scenarios:
+        console.print(
+            f"[bold red]UNSTABLE: {', '.join(result.unstable_scenarios)}[/bold red] -- growth "
+            "too close to WACC, the formula's denominator is near zero. These values are not "
+            "meaningful \"optimistic\" outcomes, they're numerical artifacts. Widen the gap "
+            "from WACC and re-run."
+        )
     console.print(f"[dim]{VALUE_RANGE_CAVEAT}[/dim]")
     console.print(
         "[bold yellow]GRAHAM LABEL REQUIRED[/bold yellow] -- run "

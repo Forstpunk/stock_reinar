@@ -17,6 +17,17 @@ from pydantic import BaseModel, ConfigDict
 #: Growth assumptions are judgment, not something this module generates.
 MIN_SCENARIOS: int = 3
 
+#: A scenario whose growth rate sits within this margin of WACC produces a
+#: per-share value that is numerically unstable, not economically
+#: meaningful: the formula divides by ``(wacc - g)``, which shrinks toward
+#: zero as g approaches wacc, so a small change in the assumption swings
+#: the result by orders of magnitude. See ``expectations.py``'s
+#: ``UnstableSolutionError`` for the equivalent guard on the two-stage
+#: reverse-DCF. Flagged rather than rejected: the value is still computed
+#: and shown, so the analyst can see how extreme it is, but it is marked
+#: as unreliable rather than presented as a normal scenario result.
+UNSTABLE_WACC_MARGIN: float = 0.02
+
 VALUE_RANGE_CAVEAT: str = (
     "A value range is only as good as its inputs. Wide ranges mean low "
     "confidence, not a wide opportunity."
@@ -33,6 +44,13 @@ class ValueRange(BaseModel):
     current_price: float
     price_position: Literal["BELOW_RANGE", "INSIDE_RANGE", "ABOVE_RANGE"]
     discount_to_low: Optional[float]
+    #: Scenario names whose growth rate is within UNSTABLE_WACC_MARGIN of
+    #: WACC -- their per-share value is numerically unstable, not a
+    #: meaningful "optimistic" outcome. Still present in per_share_values,
+    #: low/high, so check this before trusting either bound. Defaults to
+    #: [] so a session persisted before this field existed still loads --
+    #: "we don't know" degrades to "assume none flagged", not a hard failure.
+    unstable_scenarios: list[str] = []
     #: HUMAN INPUT REQUIRED. Per Graham's own definition, an investment
     #: operation promises safety of principal and a satisfactory return
     #: *on thorough analysis* -- this tool cannot certify that happened.
@@ -71,11 +89,14 @@ def value_range(
         raise ValueError(f"{symbol}: roic must be positive")
 
     per_share_values: dict[str, float] = {}
+    unstable_scenarios: list[str] = []
     for name, g in scenarios.items():
         if g >= roic:
             raise ValueError(f"{symbol}: scenario {name!r} growth {g} >= roic {roic}")
         if g >= wacc:
             raise ValueError(f"{symbol}: scenario {name!r} growth {g} >= wacc {wacc}")
+        if wacc - g < UNSTABLE_WACC_MARGIN:
+            unstable_scenarios.append(name)
         enterprise_value = nopat * (1 - g / roic) / (wacc - g)
         equity_value = enterprise_value - net_debt
         per_share_values[name] = equity_value / shares
@@ -101,6 +122,7 @@ def value_range(
         current_price=current_price,
         price_position=price_position,
         discount_to_low=discount_to_low,
+        unstable_scenarios=unstable_scenarios,
     )
 
 

@@ -81,6 +81,7 @@ def _value_range(graham_label=None) -> ValueRange:
         current_price=8.0,
         price_position="BELOW_RANGE",
         discount_to_low=0.2,
+        unstable_scenarios=[],
         graham_label=graham_label,
         label_justification="thorough analysis" if graham_label == "INVESTMENT" else None,
     )

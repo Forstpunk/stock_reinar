@@ -18,15 +18,25 @@ from pydantic import BaseModel, ConfigDict
 
 from nse_screener.data import FundamentalData
 
+#: A balance-sheet line below this share of total assets cannot support a
+#: meaningful year-on-year growth comparison: a few crore of movement on a
+#: lakh-crore balance sheet produces a large percentage that means nothing.
+#: (TCS carries ~0.02% of assets as inventory; TATASTEEL ~15%, where the
+#: check is genuinely informative.)
+INVENTORY_MATERIALITY_FRACTION: float = 0.02
+RECEIVABLE_MATERIALITY_FRACTION: float = 0.02
+
 
 class ForensicResult(BaseModel):
     """Forensic screen outcome for one symbol.
 
     Flags indicate a need for investigation, not proven manipulation.
-    ``undefined_checks`` lists checks that could not be evaluated because a
-    denominator was zero (no debt, no inventory, zero net income). They are
-    reported for transparency only -- they are NOT evidence and never count
-    towards disqualification.
+    ``undefined_checks`` lists checks that could not be evaluated, either
+    because a ratio was undefined (zero denominator: no debt, zero net
+    income) or because the line item was too small or wrongly signed to
+    carry meaning (inventory or receivables below a materiality floor,
+    negative equity). They are reported for transparency only -- they are
+    NOT evidence and never count towards disqualification.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -67,6 +77,10 @@ def forensic_screen(
         raise ValueError(
             f"{current.symbol}: total_assets must be positive, got {current.total_assets}"
         )
+    if prior.total_assets <= 0:
+        raise ValueError(
+            f"{prior.symbol}: prior total_assets must be positive, got {prior.total_assets}"
+        )
 
     flags: list[str] = []
     undefined_checks: list[str] = []
@@ -87,7 +101,18 @@ def forensic_screen(
     prior_dso = _days_outstanding(prior.accounts_receivable, prior.total_revenue)
     dso_growth_pp = _growth_pp(current_dso, prior_dso)
     revenue_growth_pp = _growth_pp(current.total_revenue, prior.total_revenue)
-    if math.isnan(dso_growth_pp) or math.isnan(revenue_growth_pp):
+    receivables_meaningful, receivables_reason = _comparison_is_meaningful(
+        "dso_growth",
+        "receivables",
+        current.accounts_receivable,
+        prior.accounts_receivable,
+        current.total_assets,
+        prior.total_assets,
+        RECEIVABLE_MATERIALITY_FRACTION,
+    )
+    if not receivables_meaningful:
+        undefined_checks.append(str(receivables_reason))
+    elif math.isnan(dso_growth_pp) or math.isnan(revenue_growth_pp):
         undefined_checks.append(
             "dso_growth: revenue or receivables zero in a period, growth undefined"
         )
@@ -99,7 +124,18 @@ def forensic_screen(
 
     inventory_growth_pp = _growth_pp(current.inventory, prior.inventory)
     cogs_growth_pp = _growth_pp(current.cost_of_goods_sold, prior.cost_of_goods_sold)
-    if math.isnan(inventory_growth_pp) or math.isnan(cogs_growth_pp):
+    inventory_meaningful, inventory_reason = _comparison_is_meaningful(
+        "inventory_growth",
+        "inventory",
+        current.inventory,
+        prior.inventory,
+        current.total_assets,
+        prior.total_assets,
+        INVENTORY_MATERIALITY_FRACTION,
+    )
+    if not inventory_meaningful:
+        undefined_checks.append(str(inventory_reason))
+    elif math.isnan(inventory_growth_pp) or math.isnan(cogs_growth_pp):
         undefined_checks.append(
             "inventory_growth: inventory or COGS zero in prior period, growth undefined"
         )
@@ -111,7 +147,22 @@ def forensic_screen(
 
     current_de = _debt_to_equity(current.total_debt, current.total_equity)
     prior_de = _debt_to_equity(prior.total_debt, prior.total_equity)
-    if math.isnan(current_de) or math.isnan(prior_de) or prior_de == 0:
+    # Materiality fraction 0: equity is the ratio's denominator, so the only
+    # question is its sign -- a period of negative equity is not comparable.
+    equity_meaningful, equity_reason = _comparison_is_meaningful(
+        "leverage_jump",
+        "equity",
+        current.total_equity,
+        prior.total_equity,
+        current.total_assets,
+        prior.total_assets,
+        materiality_fraction=0.0,
+        require_positive=True,
+    )
+    if not equity_meaningful:
+        leverage_jump_pct = math.nan
+        undefined_checks.append(str(equity_reason))
+    elif math.isnan(current_de) or math.isnan(prior_de) or prior_de == 0:
         leverage_jump_pct = math.nan
         undefined_checks.append(
             "leverage_jump: debt-to-equity undefined in current or prior period"
@@ -153,6 +204,46 @@ def _growth_pp(current: float, prior: float) -> float:
 
 
 def _debt_to_equity(debt: float, equity: float) -> float:
-    if equity == 0:
+    # Negative equity makes the ratio uninterpretable, not merely negative:
+    # a D/E of -2.0 says nothing about leverage relative to a D/E of +0.5.
+    if equity <= 0:
         return math.nan
     return debt / equity
+
+
+def _comparison_is_meaningful(
+    check: str,
+    quantity: str,
+    current_value: float,
+    prior_value: float,
+    current_scale: float,
+    prior_scale: float,
+    materiality_fraction: float,
+    require_positive: bool = False,
+) -> tuple[bool, str | None]:
+    """Return (is_meaningful, reason_if_not) for a year-on-year comparison.
+
+    A ratio built from inputs that are too small, or wrongly signed, to
+    carry meaning is arithmetically valid and economically empty -- it must
+    be reported as an inability to evaluate, never as a flag. Both periods
+    are tested: a comparison is only as sound as its weaker input. With
+    ``require_positive`` the sign is tested first, so a negative line is
+    reported as such rather than as "below the materiality floor".
+    """
+    for period, value, scale in (
+        ("current", current_value, current_scale),
+        ("prior", prior_value, prior_scale),
+    ):
+        if require_positive and value <= 0:
+            return False, (
+                f"{check}: {period} period {quantity} {value:.1f} is not positive, "
+                "comparison undefined"
+            )
+        share = value / scale
+        if share < materiality_fraction:
+            return False, (
+                f"{check}: {period} period {quantity} is {share:.2%} of total assets, "
+                f"below the {materiality_fraction:.0%} materiality floor -- immaterial, "
+                "comparison skipped"
+            )
+    return True, None

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import importlib.machinery
 import types
 
 import pandas as pd
 import pytest
 
+from nse_screener.experimental import busted
 from nse_screener.experimental.busted import NotValidatedError, detect_busted_patterns
 from nse_screener.experimental.validation_log import (
     DetectionLogEntry,
@@ -107,3 +109,75 @@ def test_detections_are_written_to_the_log(tmp_path):
     assert len(loaded) == 1
     assert loaded[0].symbol == "AAA"
     assert loaded[0].pattern_metadata["bust_type"] == "single"
+
+
+# -- The quarantine must hold against every non-sanctioned caller --------------
+
+_CALL_SOURCE = (
+    "from nse_screener.experimental.busted import detect_busted_patterns\n"
+    "import pandas as pd\n"
+    "detect_busted_patterns('AAA', pd.Series([1.0] * 50, "
+    "index=pd.bdate_range('2024-01-01', periods=50)))\n"
+)
+
+
+def _exec_as(module_name: str, spec_name: str | None = None) -> None:
+    """Run the quarantined call from a namespace impersonating ``module_name``.
+
+    ``spec_name`` mirrors ``__spec__.name`` as set by ``python -m``; a script
+    run directly has ``__spec__ = None`` and ``__name__ == "__main__"``.
+    """
+    namespace: dict[str, object] = {"__name__": module_name, "__spec__": None}
+    if spec_name is not None:
+        namespace["__spec__"] = importlib.machinery.ModuleSpec(spec_name, None)
+    exec(compile(_CALL_SOURCE, f"<{module_name}>", "exec"), namespace)
+
+
+def test_script_run_directly_as_main_is_not_exempt():
+    # A script run as ``python some_script.py`` is the accidental-production
+    # use the quarantine exists to catch. It must raise.
+    with pytest.raises(NotValidatedError):
+        _exec_as("__main__")
+
+
+def test_main_is_not_in_the_allowlist():
+    assert "__main__" not in busted._ALLOWED_CALLER_PREFIXES
+
+
+def test_internal_experimental_hop_does_not_launder_an_outside_caller():
+    # A wrapper inside nse_screener.experimental must not make the caller of
+    # that wrapper look like an experimental caller: the guard walks past
+    # internal frames to the nearest outside caller.
+    wrapper_ns: dict[str, object] = {"__name__": "nse_screener.experimental.wrapper"}
+    exec(
+        compile(
+            "from nse_screener.experimental.busted import detect_busted_patterns\n"
+            "import pandas as pd\n"
+            "def run():\n"
+            "    return detect_busted_patterns('AAA', pd.Series([1.0] * 50, "
+            "index=pd.bdate_range('2024-01-01', periods=50)))\n",
+            "<experimental_wrapper>",
+            "exec",
+        ),
+        wrapper_ns,
+    )
+    outside_ns: dict[str, object] = {"__name__": "nse_screener.ranking", "run": wrapper_ns["run"]}
+    with pytest.raises(NotValidatedError):
+        exec(compile("run()\n", "<outside_caller>", "exec"), outside_ns)
+
+
+def test_call_from_within_experimental_package_succeeds():
+    # An experimental frame is an internal hop; the nearest outside caller
+    # here is this test module, which is sanctioned.
+    _exec_as("nse_screener.experimental.some_module")
+
+
+def test_call_from_test_suite_succeeds():
+    _exec_as(__name__)
+
+
+def test_workbench_experimental_cli_is_sanctioned():
+    # ``python -m nse_screener.workbench experimental-scan`` runs with
+    # __name__ == "__main__" but __spec__.name naming the workbench: the
+    # labelled EXPERIMENTAL command that feeds the validation log.
+    _exec_as("__main__", spec_name="nse_screener.workbench.__main__")

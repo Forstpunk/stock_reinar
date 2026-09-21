@@ -173,3 +173,143 @@ def test_one_genuine_flag_plus_three_undefined_checks_is_not_disqualified():
     assert "accrual_ratio" in result.flags[0]
     assert len(result.undefined_checks) == 3
     assert result.disqualified is False
+
+
+# -- Immaterial line items cannot support a growth comparison ------------------
+
+
+def _asset_heavy_it_services_pair(**current_overrides: float):
+    """TCS-like: 29cr inventory on a 150,000cr balance sheet (0.02% of assets).
+
+    The year-on-year inventory move (21cr -> 29cr, +38%) is large in
+    percentage terms and meaningless in economic terms.
+    """
+    base = dict(
+        symbol="TCSLIKE",
+        period_end=date(2025, 3, 31),
+        total_revenue=255000.0,
+        gross_profit=110000.0,
+        net_income=48000.0,
+        operating_cash_flow=52000.0,
+        total_assets=150000.0,
+        total_equity=95000.0,
+        total_debt=8000.0,
+        current_assets=90000.0,
+        current_liabilities=40000.0,
+        shares_outstanding=362.0,
+        accounts_receivable=45000.0,
+        inventory=29.0,
+    )
+    prior = FundamentalData(
+        **{
+            **base,
+            "period_end": date(2024, 3, 31),
+            "total_revenue": 240000.0,
+            "inventory": 21.0,
+        }
+    )
+    current = FundamentalData(**{**base, **current_overrides})
+    return current, prior
+
+
+def test_immaterial_inventory_is_undefined_check_not_flag():
+    current, prior = _asset_heavy_it_services_pair()
+    result = forensic_screen(current, prior)
+    assert result.flags == []
+    assert result.disqualified is False
+    assert any("inventory" in check and "immaterial" in check for check in result.undefined_checks)
+
+
+def test_immaterial_inventory_plus_one_genuine_flag_is_not_disqualified():
+    # CFO/NI = 35000/48000 = 0.73 -- a real flag. Immaterial inventory must
+    # not supply the second flag that would disqualify a healthy company.
+    current, prior = _asset_heavy_it_services_pair(operating_cash_flow=35000.0)
+    result = forensic_screen(current, prior)
+    assert len(result.flags) == 1
+    assert "cfo_ni_ratio" in result.flags[0]
+    assert result.disqualified is False
+
+
+def test_material_inventory_build_still_flags():
+    # TATASTEEL-like: inventory ~15% of assets; a genuine build against flat
+    # COGS must still fire -- the materiality gate is not a loophole.
+    base = dict(
+        symbol="STEELLIKE",
+        period_end=date(2025, 3, 31),
+        total_revenue=220000.0,
+        gross_profit=60000.0,
+        net_income=8000.0,
+        operating_cash_flow=20000.0,
+        total_assets=280000.0,
+        total_equity=90000.0,
+        total_debt=80000.0,
+        current_assets=90000.0,
+        current_liabilities=70000.0,
+        shares_outstanding=1248.0,
+        accounts_receivable=8000.0,
+        inventory=44000.0,
+    )
+    prior = FundamentalData(
+        **{**base, "period_end": date(2024, 3, 31), "inventory": 30000.0}
+    )
+    result = forensic_screen(FundamentalData(**base), prior)
+    assert any("inventory_growth" in flag for flag in result.flags)
+
+
+def test_immaterial_receivables_is_undefined_check_not_flag():
+    # Receivables 0.5% of assets in both periods, and nearly tripling: the
+    # DSO comparison is arithmetically valid and economically meaningless.
+    current, prior = _make(
+        {"total_assets": 100000.0, "accounts_receivable": 500.0},
+        {"total_assets": 100000.0, "accounts_receivable": 180.0},
+    )
+    result = forensic_screen(current, prior)
+    assert not any("dso_growth" in flag for flag in result.flags)
+    assert any(
+        "dso_growth" in check and "immaterial" in check for check in result.undefined_checks
+    )
+
+
+def test_inventory_at_exactly_materiality_threshold_is_evaluated():
+    # Exactly 2.0% of assets in both periods: the check applies, and a build
+    # against flat COGS fires.
+    current, prior = _make(
+        {"total_assets": 10000.0, "inventory": 200.0},
+        {"total_assets": 5000.0, "inventory": 100.0},
+    )
+    result = forensic_screen(current, prior)
+    assert any("inventory_growth" in flag for flag in result.flags)
+    assert not any("inventory" in check for check in result.undefined_checks)
+
+
+# -- Negative equity makes leverage incomparable -------------------------------
+
+
+def test_negative_prior_equity_is_undefined_check_not_silent_pass():
+    # prior D/E = -2.0, current D/E = +0.32: a sign change in equity is not a
+    # comparable leverage trajectory.
+    current, prior = _make({}, {"total_equity": -200.0, "total_debt": 400.0})
+    result = forensic_screen(current, prior)
+    assert result.flags == []
+    assert any(
+        "leverage_jump" in check and "prior" in check and "-200" in check
+        for check in result.undefined_checks
+    )
+
+
+def test_negative_current_equity_is_undefined_check_not_silent_pass():
+    current, prior = _make({"total_equity": -50.0})
+    result = forensic_screen(current, prior)
+    assert not any("leverage_jump" in flag for flag in result.flags)
+    assert any(
+        "leverage_jump" in check and "current" in check and "-50" in check
+        for check in result.undefined_checks
+    )
+
+
+def test_genuine_leverage_jump_with_positive_equity_still_flags():
+    current, prior = _make({"total_debt": 400.0})
+    result = forensic_screen(current, prior)
+    assert len(result.flags) == 1
+    assert "leverage_jump" in result.flags[0]
+    assert result.undefined_checks == []

@@ -24,8 +24,12 @@ Hard rules, enforced by this module, not just documented:
 4. Every detection should be written to the forward-validation log
    (``validation_log.py``).
 5. This module raises ``NotValidatedError`` if anything outside
-   ``nse_screener.experimental`` (or the test suite) imports it -- see
-   ``_require_experimental_caller``.
+   ``nse_screener.experimental``, the test suite, or the workbench's
+   labelled ``experimental-scan`` command calls into it -- see
+   ``_require_experimental_caller``. ``__main__`` is deliberately NOT
+   exempt: a script run directly is exactly the accidental-production-use
+   case this guards against. The workbench qualifies by its module spec
+   (``python -m nse_screener.workbench``), not by being ``__main__``.
 """
 
 from __future__ import annotations
@@ -43,19 +47,53 @@ class NotValidatedError(Exception):
     into this module -- it is quarantined by design, not by convention."""
 
 
+#: Module-name prefixes sanctioned to call into this module. ``__main__`` is
+#: deliberately absent: a script run directly must raise. The workbench is
+#: listed by its spec name, which ``python -m nse_screener.workbench`` sets
+#: even though that frame's ``__name__`` is ``"__main__"``.
+_ALLOWED_CALLER_PREFIXES: tuple[str, ...] = (
+    "tests.",
+    "test_",
+    "nse_screener.workbench.__main__",
+)
+
+
+def _frame_module_name(frame_info: inspect.FrameInfo) -> str:
+    """The module a frame belongs to, by spec name where one exists.
+
+    ``__spec__.name`` is set for imported modules and for ``python -m``
+    entry points; it is ``None`` for a script run directly, whose
+    ``__name__`` is ``"__main__"`` -- so that case falls through to the
+    name and is refused by the allowlist.
+    """
+    spec = frame_info.frame.f_globals.get("__spec__")
+    if spec is not None and getattr(spec, "name", None):
+        return str(spec.name)
+    return str(frame_info.frame.f_globals.get("__name__", ""))
+
+
 def _require_experimental_caller(public_function_name: str) -> None:
-    caller_frame = inspect.stack()[2]  # 0=this fn, 1=the public fn, 2=its caller
-    caller_module = caller_frame.frame.f_globals.get("__name__", "")
-    if (
-        caller_module.startswith("nse_screener.experimental")
-        or caller_module.startswith("test_")
-        or caller_module == "__main__"
-    ):
-        return
+    """Raise unless the nearest caller outside this package is sanctioned.
+
+    Walks the stack outward past ``nse_screener.experimental`` frames so
+    that an internal wrapper cannot launder an outside caller, and decides
+    on the first frame that is not experimental. ``__main__`` is NOT exempt
+    -- see ``_ALLOWED_CALLER_PREFIXES``.
+    """
+    for frame_info in inspect.stack()[1:]:
+        module = _frame_module_name(frame_info)
+        if module.startswith("nse_screener.experimental"):
+            continue  # internal hop, keep walking outward
+        if module.startswith(_ALLOWED_CALLER_PREFIXES):
+            return
+        raise NotValidatedError(
+            f"{public_function_name} may only be called from nse_screener.experimental, "
+            f"the test suite or the workbench experimental-scan command -- called from "
+            f"{module!r}. This module is unvalidated on NSE data and quarantined by "
+            "design; see the module docstring."
+        )
     raise NotValidatedError(
-        f"{public_function_name} may only be called from nse_screener.experimental "
-        f"or the test suite -- called from {caller_module!r}. This module is "
-        "unvalidated on NSE data and quarantined by design; see the module docstring."
+        f"{public_function_name}: no legitimate caller found in the stack."
     )
 
 

@@ -27,7 +27,9 @@ def return_on_equity(f: FundamentalData) -> float:
     Requires ``f.prior`` to be set (as returned by ``data.fetch_fundamentals``).
     """
     if f.prior is None:
-        raise ValueError(f"{f.symbol}: return_on_equity requires the prior period (f.prior is None)")
+        raise ValueError(
+            f"{f.symbol}: return_on_equity requires the prior period (f.prior is None)"
+        )
     avg_equity = (f.total_equity + f.prior.total_equity) / 2.0
     if avg_equity <= 0:
         raise ValueError(f"{f.symbol}: average equity must be positive, got {avg_equity}")

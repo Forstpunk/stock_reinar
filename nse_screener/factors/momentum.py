@@ -37,7 +37,9 @@ def weighted_relative_strength(
     that, or if the score cannot be computed without NaN propagation.
     """
     if weights[0] < weights[1] or weights[0] < weights[2] or weights[0] < weights[3]:
-        raise ValueError("the most recent quarter must be weighted at least as heavily as the others")
+        raise ValueError(
+            "the most recent quarter must be weighted at least as heavily as the others"
+        )
 
     w1, w2, w3, w4 = weights
     required = max(min_sessions, 4 * quarter_sessions + 1)

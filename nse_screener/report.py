@@ -126,31 +126,50 @@ def _print_shortlist_table(console: Console, shortlist: Shortlist) -> None:
     table = Table(title=f"Top {len(shortlist.entries)} of {shortlist.requested_top_n} requested")
     table.add_column("Rank")
     table.add_column("Symbol")
-    table.add_column("Composite")
+    table.add_column("Score")
+    table.add_column("Basis")
     table.add_column("RS %ile")
     table.add_column("F-Score")
     table.add_column("Gross Profitability")
     table.add_column("ROE")
+    table.add_column("Value %ile")
     table.add_column("Liquidity (Cr)")
     table.add_column("ATR %")
 
     for rank, entry in enumerate(shortlist.entries, start=1):
         f_score_cell = f"{entry.f_score.total_score}/9" if entry.f_score else "n/a"
-        gp_cell = f"{entry.gross_profitability:.2%}" if entry.gross_profitability is not None else "n/a"
+        gp_cell = (
+            f"{entry.gross_profitability:.2%}" if entry.gross_profitability is not None else "n/a"
+        )
         roe_cell = f"{entry.roe:.2%}" if entry.roe is not None else "n/a"
+        value_cell = (
+            f"{entry.value_percentile:.0%}" if entry.value_percentile is not None else "n/a"
+        )
         table.add_row(
             str(rank),
             entry.symbol,
             f"{entry.composite_score:.3f}",
+            _basis_label(entry.score_basis),
             f"{entry.rs_percentile:.0%}",
             f_score_cell,
             gp_cell,
             roe_cell,
+            value_cell,
             f"{entry.avg_traded_value_crore:.1f}",
             f"{entry.atr_pct:.1f}%",
         )
     console.print(table)
-    console.print(f"Holding horizon for every entry: {shortlist.entries[0].holding_horizon_sessions if shortlist.entries else 63} sessions")
+    if any(entry.score_basis == "rs_only" for entry in shortlist.entries):
+        console.print(
+            "[yellow]Basis 'RS only': score is the relative-strength percentile alone, "
+            "not the full composite -- not comparable with composite scores.[/yellow]"
+        )
+    horizon = shortlist.entries[0].holding_horizon_sessions if shortlist.entries else 63
+    console.print(f"Holding horizon for every entry: {horizon} sessions")
+
+
+def _basis_label(score_basis: str) -> str:
+    return {"composite": "composite", "rs_only": "RS only"}[score_basis]
 
 
 def _print_per_name_detail(console: Console, shortlist: Shortlist) -> None:
@@ -159,7 +178,10 @@ def _print_per_name_detail(console: Console, shortlist: Shortlist) -> None:
     console.rule("Per-name detail")
     for entry in shortlist.entries:
         f = entry.f_score
-        console.print(f"[bold]{entry.symbol}[/bold] -- composite {entry.composite_score:.3f}")
+        console.print(
+            f"[bold]{entry.symbol}[/bold] -- score {entry.composite_score:.3f} "
+            f"({_basis_label(entry.score_basis)})"
+        )
         if f is not None:
             console.print(
                 "  F-Score breakdown: "
@@ -167,10 +189,12 @@ def _print_per_name_detail(console: Console, shortlist: Shortlist) -> None:
                 f"(ROA>0={f.roa_positive}, CFO>0={f.cfo_positive}, "
                 f"ROA improved={f.roa_improved}, accruals quality={f.accruals_quality}), "
                 f"leverage/liquidity {f.leverage_liquidity_score}/3 "
-                f"(leverage down={f.leverage_decreased}, current ratio up={f.current_ratio_improved}, "
+                f"(leverage down={f.leverage_decreased}, "
+                f"current ratio up={f.current_ratio_improved}, "
                 f"no new shares={f.no_share_issuance}), "
                 f"efficiency {f.efficiency_score}/2 "
-                f"(gross margin up={f.gross_margin_improved}, asset turnover up={f.asset_turnover_improved})"
+                f"(gross margin up={f.gross_margin_improved}, "
+                f"asset turnover up={f.asset_turnover_improved})"
             )
         else:
             console.print("  F-Score breakdown: n/a (--skip-fundamentals)")

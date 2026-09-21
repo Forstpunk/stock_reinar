@@ -20,7 +20,7 @@ financial statements (fundamentals); see README.md.
 from __future__ import annotations
 
 from datetime import date
-from typing import Optional
+from typing import Optional, cast
 
 import pandas as pd
 import yfinance as yf
@@ -40,6 +40,24 @@ class InsufficientFundamentalsError(Exception):
         super().__init__(
             f"{symbol}: missing required fundamental fields: {', '.join(missing_fields)}"
         )
+
+
+class UnsupportedStatementFormatError(InsufficientFundamentalsError):
+    """Raised when statements are in a format the factor models are not defined for.
+
+    Banks and NBFCs publish an unclassified balance sheet (no current /
+    non-current split) and report no gross profit or inventory. The
+    Piotroski F-Score, gross profitability and the forensic inventory and
+    receivables checks are not defined for such statements -- Piotroski's
+    own study excludes financials -- so the symbol is excluded outright,
+    with this reason, rather than reported as "missing data".
+    """
+
+    def __init__(self, symbol: str, reason: str) -> None:
+        Exception.__init__(self, f"{symbol}: {reason}")
+        self.symbol = symbol
+        self.missing_fields = []
+        self.reason = reason
 
 
 class ValidationReport(BaseModel):
@@ -156,7 +174,9 @@ def _extract_ticker_frame(
         return raw
     if symbol not in raw.columns.get_level_values(0):
         return None
-    return raw[symbol]
+    # A MultiIndex column selection returns a DataFrame at runtime; the stubs
+    # type single-key indexing as a Series.
+    return cast(pd.DataFrame, raw[symbol])
 
 
 def validate_price_data(
@@ -234,7 +254,7 @@ def validate_price_data(
         abs_returns = frame["Close"].pct_change().abs()
         moves = abs_returns[abs_returns > impossible_move_abs_return]
         for move_date, move_value in moves.items():
-            flagged.append((symbol, move_date.date(), float(move_value)))
+            flagged.append((symbol, cast(pd.Timestamp, move_date).date(), float(move_value)))
 
     accepted = [symbol for symbol in frames if symbol not in rejected]
     if not accepted:
@@ -270,21 +290,61 @@ _CASHFLOW_FIELDS: dict[str, list[str]] = {
     ],
 }
 
+#: Balance-sheet fields whose line is omitted entirely by Yahoo when the
+#: company has none of it. On a *classified* balance sheet an absent line
+#: item means zero (the statement must still balance), so this is reading
+#: the statement, not imputing. A line that is present but NaN for a period
+#: is still treated as missing.
+_BALANCE_ZERO_WHEN_LINE_ABSENT: frozenset[str] = frozenset({"inventory"})
+
+#: Consecutive annual periods must be this far apart. Outside this window the
+#: two periods are not comparable year-on-year (a fiscal-year change produces
+#: a transition period, or Yahoo has dropped a year).
+_ANNUAL_GAP_DAYS_MIN: int = 330
+_ANNUAL_GAP_DAYS_MAX: int = 400
+
 
 def fetch_fundamentals(symbol: str) -> FundamentalData:
     """Fetch two annual fiscal periods of fundamentals for ``symbol``.
 
     Returns the most recent period as a ``FundamentalData``, with the
-    prior period attached via ``.prior``. Raises
-    ``InsufficientFundamentalsError`` if fewer than two annual periods are
-    available, or if either period is missing a required field -- no
-    field is ever imputed or defaulted.
+    prior period attached via ``.prior``. See
+    ``fundamentals_from_statements`` for the parsing rules and the errors
+    raised.
     """
     ticker = yf.Ticker(f"{symbol}.NS")
-    income = ticker.income_stmt
-    balance = ticker.balance_sheet
-    cashflow = ticker.cashflow
+    return fundamentals_from_statements(
+        symbol, ticker.income_stmt, ticker.balance_sheet, ticker.cashflow
+    )
 
+
+def fundamentals_from_statements(
+    symbol: str,
+    income: Optional[pd.DataFrame],
+    balance: Optional[pd.DataFrame],
+    cashflow: Optional[pd.DataFrame],
+) -> FundamentalData:
+    """Build two consecutive annual periods from raw yfinance statements.
+
+    Rules, in order:
+
+    1. An unclassified balance sheet (no ``Current Assets`` or ``Current
+       Liabilities`` line -- banks, NBFCs) raises
+       ``UnsupportedStatementFormatError``: the factor models are not
+       defined for it, and no data source can supply the missing lines.
+    2. The newest period(s) are skipped while they are unreported
+       placeholders (Yahoo publishes a column with neither total revenue
+       nor net income before the annual report lands). The first reported
+       period is ``current``; the next one is ``prior``.
+    3. ``current`` and ``prior`` must be ``_ANNUAL_GAP_DAYS_MIN`` to
+       ``_ANNUAL_GAP_DAYS_MAX`` days apart, otherwise
+       ``InsufficientFundamentalsError`` -- a fiscal-year change or a
+       dropped year makes the two periods non-comparable.
+    4. Any required field missing from either period raises
+       ``InsufficientFundamentalsError``. The only exception is a balance
+       line in ``_BALANCE_ZERO_WHEN_LINE_ABSENT`` that is absent from the
+       statement altogether, which is read as zero.
+    """
     if income is None or income.empty:
         raise InsufficientFundamentalsError(symbol, ["income_stmt unavailable"])
     if balance is None or balance.empty:
@@ -292,20 +352,49 @@ def fetch_fundamentals(symbol: str) -> FundamentalData:
     if cashflow is None or cashflow.empty:
         raise InsufficientFundamentalsError(symbol, ["cashflow unavailable"])
 
-    common_periods = sorted(
-        set(income.columns) & set(balance.columns) & set(cashflow.columns),
-        reverse=True,
-    )
-    if len(common_periods) < 2:
-        raise InsufficientFundamentalsError(
-            symbol, ["fewer than 2 annual periods common to all three statements"]
+    if "Current Assets" not in balance.index and "Current Liabilities" not in balance.index:
+        raise UnsupportedStatementFormatError(
+            symbol,
+            "unclassified balance sheet (no current/non-current split, as published by "
+            "banks and NBFCs); F-Score, gross profitability and the forensic screen are "
+            "not defined for financial-sector statements",
         )
 
-    current = _extract_period(
-        symbol, common_periods[0], income, balance, cashflow
+    # yfinance statement columns are period-end Timestamps; the stubs type them as str.
+    common_periods: list[pd.Timestamp] = sorted(
+        set(income.columns) & set(balance.columns) & set(cashflow.columns),  # type: ignore[arg-type]
+        reverse=True,
     )
-    prior = _extract_period(symbol, common_periods[1], income, balance, cashflow)
+    reported_periods = [
+        period for period in common_periods if not _is_unreported_placeholder(income, period)
+    ]
+    if len(reported_periods) < 2:
+        raise InsufficientFundamentalsError(
+            symbol, ["fewer than 2 reported annual periods common to all three statements"]
+        )
+
+    current_period, prior_period = reported_periods[0], reported_periods[1]
+    gap_days = (current_period - prior_period).days
+    if not _ANNUAL_GAP_DAYS_MIN <= gap_days <= _ANNUAL_GAP_DAYS_MAX:
+        raise InsufficientFundamentalsError(
+            symbol,
+            [
+                f"periods {current_period.date()} and {prior_period.date()} are {gap_days} "
+                "days apart, not consecutive annual periods (fiscal-year change?)"
+            ],
+        )
+
+    current = _extract_period(symbol, current_period, income, balance, cashflow)
+    prior = _extract_period(symbol, prior_period, income, balance, cashflow)
     return current.model_copy(update={"prior": prior})
+
+
+def _is_unreported_placeholder(income: pd.DataFrame, period: pd.Timestamp) -> bool:
+    """True when the period has neither revenue nor net income -- nothing has been filed."""
+    return (
+        _lookup(income, period, _INCOME_FIELDS["total_revenue"]) is None
+        and _lookup(income, period, _INCOME_FIELDS["net_income"]) is None
+    )
 
 
 def _extract_period(
@@ -325,6 +414,9 @@ def _extract_period(
     missing: list[str] = []
     for field, (frame, labels) in frames_by_field.items():
         value = _lookup(frame, period, labels)
+        if value is None and field in _BALANCE_ZERO_WHEN_LINE_ABSENT:
+            if not any(label in frame.index for label in labels):
+                value = 0.0
         if value is None:
             missing.append(field)
         else:
@@ -333,7 +425,8 @@ def _extract_period(
     if missing:
         raise InsufficientFundamentalsError(symbol, missing)
 
-    return FundamentalData(symbol=symbol, period_end=period.date(), **values)
+    # ``values`` holds only float fields; mypy cannot see that ``prior`` is absent.
+    return FundamentalData(symbol=symbol, period_end=period.date(), **values)  # type: ignore[arg-type]
 
 
 def _lookup(
@@ -343,7 +436,7 @@ def _lookup(
         return None
     for label in labels:
         if label in frame.index:
-            value = frame.loc[label, period]
+            value = frame.loc[label, period]  # type: ignore[index]
             if pd.notna(value):
                 return float(value)
     return None

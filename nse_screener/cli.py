@@ -20,6 +20,7 @@ from nse_screener.data import (
     DataIntegrityError,
     FundamentalData,
     InsufficientFundamentalsError,
+    UnsupportedStatementFormatError,
     fetch_fundamentals,
     fetch_price_history,
     validate_price_data,
@@ -29,6 +30,11 @@ from nse_screener.ranking import build_momentum_only_shortlist, build_shortlist
 from nse_screener.report import RunMetadata, build_json_payload, print_report
 from nse_screener.tracker import TrackedEntry, TrackedRun, log_run
 from nse_screener.universe import fetch_full_nse_universe
+
+#: A fundamentals period older than this (relative to the last price session)
+#: means Yahoo has a newer fiscal year listed that is not yet fully reported;
+#: the run still uses the last complete year, and says so.
+STALE_FUNDAMENTALS_DAYS: int = 456  # ~15 months
 
 
 def _read_universe(path: Path) -> list[str]:
@@ -55,7 +61,9 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         ),
     )
     parser.add_argument("--top", type=int, default=5, help="Shortlist size (default 5)")
-    parser.add_argument("--json", type=Path, default=None, help="Also write a JSON report to this path")
+    parser.add_argument(
+        "--json", type=Path, default=None, help="Also write a JSON report to this path"
+    )
     parser.add_argument(
         "--skip-fundamentals",
         action="store_true",
@@ -148,11 +156,29 @@ def main(argv: list[str] | None = None) -> int:
         shortlist = build_momentum_only_shortlist(accepted_frames, config, top_n=args.top)
     else:
         fundamentals: dict[str, FundamentalData] = {}
+        unsupported_format: list[str] = []
         for symbol in validation.accepted:
             try:
                 fundamentals[symbol] = fetch_fundamentals(symbol)
+            except UnsupportedStatementFormatError:
+                unsupported_format.append(symbol)
             except InsufficientFundamentalsError as exc:
                 console.print(f"[yellow]Excluding {symbol}: {exc}[/yellow]")
+        if unsupported_format:
+            console.print(
+                f"[yellow]Excluding {len(unsupported_format)} financial-sector name(s) "
+                "(unclassified balance sheet -- F-Score, gross profitability and the "
+                f"forensic screen are not defined for banks/NBFCs): "
+                f"{', '.join(unsupported_format)}[/yellow]"
+            )
+        last_session = index_frame.sort_index().index[-1].date()
+        for symbol, fdata in fundamentals.items():
+            if (last_session - fdata.period_end).days > STALE_FUNDAMENTALS_DAYS:
+                console.print(
+                    f"[yellow]{symbol}: latest complete fundamentals period ends "
+                    f"{fdata.period_end} -- a newer period exists on Yahoo but is not yet "
+                    "fully reported[/yellow]"
+                )
         shortlist = build_shortlist(accepted_frames, fundamentals, config, top_n=args.top)
 
     metadata = RunMetadata(
@@ -188,7 +214,9 @@ def main(argv: list[str] | None = None) -> int:
             ],
         )
         log_run(tracked_run, args.track)
-        console.print(f"Logged {len(tracked_run.entries)} pick(s) to {args.track} for later evaluation.")
+        console.print(
+            f"Logged {len(tracked_run.entries)} pick(s) to {args.track} for later evaluation."
+        )
 
     if not shortlist.entries:
         console.print("[bold red]No symbols qualified for the shortlist.[/bold red]")

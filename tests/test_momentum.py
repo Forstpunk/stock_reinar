@@ -80,3 +80,12 @@ def test_config_rejects_eligibility_below_data_validation_minimum():
 
     with pytest.raises(ValidationError, match="eligibility_min_sessions"):
         ScreenerConfig(eligibility_min_sessions=100)
+
+
+def test_config_rejects_momentum_weights_with_recent_quarter_underweighted():
+    from pydantic import ValidationError
+
+    from nse_screener.config import ScreenerConfig
+
+    with pytest.raises(ValidationError, match="most recent quarter"):
+        ScreenerConfig(momentum_weights=(0.1, 0.3, 0.3, 0.3))

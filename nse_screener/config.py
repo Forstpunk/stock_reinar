@@ -42,6 +42,11 @@ class ScreenerConfig(BaseModel):
     gate_breadth_high_proximity: float = 0.15
 
     # -- Momentum (factors/momentum.py) ------------------------------------
+    # ``momentum_min_sessions`` is a floor only. The true requirement is
+    # derived inside ``weighted_relative_strength`` as
+    # ``max(momentum_min_sessions, 4 * momentum_quarter_sessions + 1)``
+    # (253 with the defaults), because the oldest term looks back four
+    # full quarters.
     momentum_min_sessions: int = 252
     momentum_quarter_sessions: int = 63
     momentum_weights: tuple[float, float, float, float] = (0.4, 0.2, 0.2, 0.2)
@@ -61,16 +66,28 @@ class ScreenerConfig(BaseModel):
     fundamentals_min_years: int = 2
 
     # -- Composite ranking weights (ranking.py) ------------------------------
-    # WEIGHTS ARE UNVALIDATED. They reflect evidence strength of each factor
-    # (momentum strongest, hence highest weight), NOT an optimised blend.
-    # Do not tune these against historical returns without a proper
-    # out-of-sample split -- in-sample optimisation of these weights will
-    # produce a curve-fitted result that fails live. Changing them requires
-    # a fresh backtest with a matched random-entry benchmark.
-    weight_rs: float = 0.40
-    weight_f_score: float = 0.25
-    weight_gross_profitability: float = 0.20
-    weight_roe: float = 0.15
+    # WEIGHTS ARE UNVALIDATED. They reflect evidence strength of each factor,
+    # NOT an optimised blend. Do not tune these against historical returns
+    # without a proper out-of-sample split -- in-sample optimisation of these
+    # weights will produce a curve-fitted result that fails live. Changing
+    # them requires a fresh backtest with a matched random-entry benchmark.
+    #
+    # weight_value was added after the original four and rebalances all
+    # five to sum to 1.0. Value (earnings yield / book-to-price) has
+    # first-tier academic evidence on its own, on par with momentum and
+    # profitability -- but it is weighted below rs and f_score here because
+    # (a) it has no NSE-specific validation in this tool, unlike momentum's
+    # backing, and (b) value and momentum are documented to be negatively
+    # correlated factors, so overweighting value directly fights the
+    # tool's primary signal rather than diversifying it. gross_profitability
+    # and roe were trimmed to make room, roe more so since it is the most
+    # redundant of the four with gross_profitability (both are "quality"
+    # proxies) rather than an independent signal.
+    weight_rs: float = 0.35
+    weight_f_score: float = 0.20
+    weight_value: float = 0.20
+    weight_gross_profitability: float = 0.15
+    weight_roe: float = 0.10
 
     top_n: int = 5
 
@@ -89,7 +106,11 @@ class ScreenerConfig(BaseModel):
         return value
 
     @field_validator(
-        "weight_rs", "weight_f_score", "weight_gross_profitability", "weight_roe"
+        "weight_rs",
+        "weight_f_score",
+        "weight_value",
+        "weight_gross_profitability",
+        "weight_roe",
     )
     @classmethod
     def _weight_in_unit_interval(cls, value: float) -> float:
@@ -104,6 +125,15 @@ class ScreenerConfig(BaseModel):
     ) -> tuple[float, float, float, float]:
         if abs(sum(value) - 1.0) > 1e-9:
             raise ValueError("momentum_weights must sum to 1.0")
+        if value[0] < max(value[1:]):
+            # Mirrors the check in weighted_relative_strength. Enforced here
+            # so a misconfiguration fails at construction rather than being
+            # caught by ranking.py's per-symbol ValueError handling and
+            # reported as every symbol being momentum-uncomputable.
+            raise ValueError(
+                "momentum_weights[0] (most recent quarter) must be at least as "
+                "large as every other weight"
+            )
         return value
 
     @model_validator(mode="after")
@@ -111,6 +141,7 @@ class ScreenerConfig(BaseModel):
         total = (
             self.weight_rs
             + self.weight_f_score
+            + self.weight_value
             + self.weight_gross_profitability
             + self.weight_roe
         )

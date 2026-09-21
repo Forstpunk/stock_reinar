@@ -1,0 +1,66 @@
+{
+  "symbol": "TATASTEEL",
+  "created_at": "2026-09-21T14:19:07.548452",
+  "stage": "4_prospective",
+  "business_context": {
+    "industry_economics": "Steel is a capital-intensive, cyclical commodity business. Profitability tracks global steel prices and input costs (iron ore, coking coal) far more than company-specific execution. Scale and vertical integration into raw materials are the main structural advantages available to a producer.",
+    "competitive_position": "Tata Steel is one of the largest steel producers in India with significant vertical integration into iron ore mining, giving it a cost advantage over less-integrated domestic peers. It also carries meaningful European operations that are structurally lower-margin than the Indian business.",
+    "revenue_drivers": [
+      "Domestic Indian steel demand from infrastructure and construction",
+      "Global steel price cycles affecting the European operations"
+    ],
+    "analyst": "Admin",
+    "entered_at": "2026-09-21T14:19:09.176787"
+  },
+  "accounting_verdict": {
+    "forensic_flags": [],
+    "m_score": -2.8951706775478225,
+    "m_score_band": "normal",
+    "distress_verdict": "DISTRESS",
+    "verdict": "INVESTIGATE",
+    "reasoning": "routine check",
+    "analyst": "Admin",
+    "entered_at": "2026-09-21T14:19:18.983571"
+  },
+  "financial_summary": {
+    "roic_analysis": {
+      "symbol": "TATASTEEL",
+      "roic": 0.08387924279830061,
+      "operating_margin": 0.10046203220612378,
+      "capital_turnover": 1.2247873252065382,
+      "economic_spread": -0.021295773486693093,
+      "economic_profit": -40041870712.18698,
+      "value_creating": false,
+      "spread_at_wacc_low": -0.00753468600097372,
+      "spread_at_wacc_high": -0.03790935446372125,
+      "spread_sign_uncertain": false
+    },
+    "multiples": {
+      "symbol": "TATASTEEL",
+      "enterprise_value": 3131408661511.1235,
+      "market_cap": 2296441361511.1235,
+      "pe": 21.275421711685645,
+      "pe_reason": null,
+      "pb": 2.2477186873840433,
+      "pb_reason": null,
+      "ev_ebitda": 8.923232773686435,
+      "ev_ebitda_reason": null,
+      "ev_ebit": 13.534934728768782,
+      "ev_ebit_reason": null,
+      "ev_sales": 1.3597470486293526,
+      "ev_sales_reason": null,
+      "ev_invested_capital": 1.62535460586363,
+      "ev_invested_capital_reason": null,
+      "fcf_yield": 0.02833147131757668,
+      "dividend_yield": 0.019551424544302486,
+      "payout_ratio": 0.41596480224423676,
+      "payout_ratio_reason": null,
+      "total_payout_yield": 0.019551424544302486
+    },
+    "peer_percentiles": {},
+    "analyst": "Admin",
+    "entered_at": "2026-09-21T14:19:29.221203"
+  },
+  "prospective": null,
+  "terminal_state": null
+}

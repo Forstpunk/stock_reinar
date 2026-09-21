@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nse-screener"
+version = "1.0.0"
+description = "Evidence-based NSE equity screener: momentum, quality, F-Score, forensic screen and a market gate"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "pandas",
+    "numpy",
+    "yfinance",
+    "pydantic>=2,<3",
+    "rich",
+    "requests",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "ruff",
+    "mypy",
+    "pandas-stubs",
+    "types-requests",
+]
+
+[tool.setuptools.packages.find]
+include = ["nse_screener*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+
+[tool.mypy]
+strict = true
+files = ["nse_screener"]
+
+[[tool.mypy.overrides]]
+module = ["yfinance", "yfinance.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

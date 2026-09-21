@@ -64,7 +64,9 @@ def forensic_screen(
     disqualification count.
     """
     if current.total_assets <= 0:
-        raise ValueError(f"{current.symbol}: total_assets must be positive, got {current.total_assets}")
+        raise ValueError(
+            f"{current.symbol}: total_assets must be positive, got {current.total_assets}"
+        )
 
     flags: list[str] = []
     undefined_checks: list[str] = []
@@ -86,7 +88,9 @@ def forensic_screen(
     dso_growth_pp = _growth_pp(current_dso, prior_dso)
     revenue_growth_pp = _growth_pp(current.total_revenue, prior.total_revenue)
     if math.isnan(dso_growth_pp) or math.isnan(revenue_growth_pp):
-        undefined_checks.append("dso_growth: revenue or receivables zero in a period, growth undefined")
+        undefined_checks.append(
+            "dso_growth: revenue or receivables zero in a period, growth undefined"
+        )
     elif dso_growth_pp - revenue_growth_pp > dso_vs_revenue_growth_pp:
         flags.append(
             f"dso_growth {dso_growth_pp:.1f}pp exceeds revenue_growth "
@@ -96,7 +100,9 @@ def forensic_screen(
     inventory_growth_pp = _growth_pp(current.inventory, prior.inventory)
     cogs_growth_pp = _growth_pp(current.cost_of_goods_sold, prior.cost_of_goods_sold)
     if math.isnan(inventory_growth_pp) or math.isnan(cogs_growth_pp):
-        undefined_checks.append("inventory_growth: inventory or COGS zero in prior period, growth undefined")
+        undefined_checks.append(
+            "inventory_growth: inventory or COGS zero in prior period, growth undefined"
+        )
     elif inventory_growth_pp - cogs_growth_pp > inventory_vs_cogs_growth_pp:
         flags.append(
             f"inventory_growth {inventory_growth_pp:.1f}pp exceeds cogs_growth "
@@ -107,11 +113,15 @@ def forensic_screen(
     prior_de = _debt_to_equity(prior.total_debt, prior.total_equity)
     if math.isnan(current_de) or math.isnan(prior_de) or prior_de == 0:
         leverage_jump_pct = math.nan
-        undefined_checks.append("leverage_jump: debt-to-equity undefined in current or prior period")
+        undefined_checks.append(
+            "leverage_jump: debt-to-equity undefined in current or prior period"
+        )
     else:
         leverage_jump_pct = (current_de / prior_de - 1.0) * 100
         if current_de / prior_de - 1.0 > leverage_jump_fraction:
-            flags.append(f"leverage_jump {leverage_jump_pct:.1f}% exceeds {leverage_jump_fraction:.0%}")
+            flags.append(
+                f"leverage_jump {leverage_jump_pct:.1f}% exceeds {leverage_jump_fraction:.0%}"
+            )
 
     disqualified = len(flags) >= disqualify_flag_count
 

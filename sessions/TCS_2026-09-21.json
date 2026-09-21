@@ -1,0 +1,123 @@
+{
+  "symbol": "TCS",
+  "created_at": "2026-09-21T14:17:18.623711",
+  "stage": "complete",
+  "business_context": {
+    "industry_economics": "IT services is a people-scaled, contract-revenue business. Revenue comes from long-term outsourcing and project contracts billed on time-and-materials or fixed-price terms. Margins depend on utilization, wage inflation versus pricing power, and the mix of onshore/offshore delivery. Switching costs are moderate to high once a vendor is embedded in a client's core systems.",
+    "competitive_position": "TCS is the largest Indian IT services vendor by revenue, with a diversified client base across banking, retail and manufacturing verticals, and a long-standing reputation for delivery reliability. It competes against Infosys, Wipro, HCLTech and global players like Accenture on price and capability breadth.",
+    "revenue_drivers": [
+      "Large multi-year outsourcing contracts with Fortune 500 clients",
+      "Growth in digital transformation and cloud migration project work"
+    ],
+    "analyst": "Admin",
+    "entered_at": "2026-09-21T14:17:20.228694"
+  },
+  "accounting_verdict": {
+    "forensic_flags": [
+      "inventory_growth 38.1pp exceeds cogs_growth 0.6pp by more than 20.0pp"
+    ],
+    "m_score": -2.372976062168772,
+    "m_score_band": "normal",
+    "distress_verdict": "SAFE",
+    "verdict": "CLEAN",
+    "reasoning": "checking flags if any",
+    "analyst": "Admin",
+    "entered_at": "2026-09-21T14:17:28.068803"
+  },
+  "financial_summary": {
+    "roic_analysis": {
+      "symbol": "TCS",
+      "roic": 0.5277005131243839,
+      "operating_margin": 0.2498455177682654,
+      "capital_turnover": 2.7968528976311893,
+      "economic_spread": 0.4108120165965315,
+      "economic_profit": 392210243079.0322,
+      "value_creating": true,
+      "spread_at_wacc_low": 0.42801798914388123,
+      "spread_at_wacc_high": 0.389663637106178,
+      "spread_sign_uncertain": false
+    },
+    "multiples": {
+      "symbol": "TCS",
+      "enterprise_value": 7772311248010.17,
+      "market_cap": 7723531248010.17,
+      "pe": 15.695044194290125,
+      "pe_reason": null,
+      "pb": 7.202099261479084,
+      "pb_reason": null,
+      "ev_ebitda": 10.753951971677463,
+      "ev_ebitda_reason": null,
+      "ev_ebit": 11.650195233399542,
+      "ev_ebit_reason": null,
+      "ev_sales": 2.9107490601900863,
+      "ev_sales_reason": null,
+      "ev_invested_capital": 7.721624957464382,
+      "ev_invested_capital_reason": null,
+      "fcf_yield": 0.051804874893584214,
+      "dividend_yield": 0.05106084086881922,
+      "payout_ratio": 0.8014021540337329,
+      "payout_ratio_reason": null,
+      "total_payout_yield": 0.05089770305535797
+    },
+    "peer_percentiles": {},
+    "analyst": "Admin",
+    "entered_at": "2026-09-21T14:17:38.000571"
+  },
+  "prospective": {
+    "implied_expectations": {
+      "symbol": "TCS",
+      "implied_growth_at_wacc_low": 0.0678260517908269,
+      "implied_growth_at_wacc_point": 0.09881893739268596,
+      "implied_growth_at_wacc_high": 0.1358971111768883,
+      "continuing_value_share_of_total": 0.5177586498248774,
+      "terminal_value_dominant": false,
+      "historical_revenue_cagr_3y": null,
+      "historical_revenue_cagr_5y": null,
+      "historical_nopat_cagr_3y": null,
+      "historical_nopat_cagr_5y": null,
+      "explicit_years": 10,
+      "plausibility_assessment": "9.9% growth for 10 years is plausible given TCS's track record, though on the optimistic side",
+      "plausibility_verdict": "FAIR"
+    },
+    "value_range": {
+      "symbol": "TCS",
+      "per_share_values": {
+        "conservative": 1660.3099720476343,
+        "base": 2562.442068648348,
+        "optimistic": 6670.027732827328
+      },
+      "low": 1660.3099720476343,
+      "high": 6670.027732827328,
+      "current_price": 2134.10009765625,
+      "price_position": "INSIDE_RANGE",
+      "discount_to_low": null,
+      "graham_label": "INVESTMENT",
+      "label_justification": "Thorough analysis completed across all four Palepu stages; CLEAN accounting verdict, ROIC well above WACC, price inside the value range."
+    },
+    "position_plan": {
+      "entry_price": 2135.0,
+      "stop_price": 2011.3857421875,
+      "stop_distance": 123.6142578125,
+      "atr_multiple": 2.0,
+      "capital": 500000.0,
+      "risk_pct_requested": 0.01,
+      "risk_pct_effective": 0.0,
+      "risk_amount": 0.0,
+      "gate_multiplier": 0.0,
+      "speculation_multiplier": 1.0,
+      "shares": 0,
+      "position_value": 0.0,
+      "position_value_capped": false,
+      "permitted": false,
+      "reason": "market gate hostile",
+      "r_multiple_targets": {
+        "1": 2258.6142578125,
+        "2": 2382.228515625,
+        "3": 2505.8427734375
+      }
+    },
+    "analyst": "Admin",
+    "entered_at": "2026-09-21T14:22:41.557670"
+  },
+  "terminal_state": "ANALYSIS_COMPLETE"
+}

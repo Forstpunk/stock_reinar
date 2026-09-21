@@ -120,6 +120,7 @@ def test_composite_score_arithmetic(config: ScreenerConfig):
         expected = (
             config.weight_rs * entry.rs_percentile
             + config.weight_f_score * entry.f_score_percentile
+            + config.weight_value * entry.value_percentile
             + config.weight_gross_profitability * entry.gross_profitability_percentile
             + config.weight_roe * entry.roe_percentile
         )
@@ -203,3 +204,23 @@ def test_momentum_only_path_all_uncomputable_gives_empty_shortlist(config: Scree
     assert shortlist.qualifying_count == 0
     assert shortlist.excluded_count["momentum_uncomputable"] == 2
     assert shortlist.shortfall_note is not None
+
+
+# -- score_basis makes the meaning of composite_score explicit ---------------
+
+
+def test_score_basis_distinguishes_the_two_ranking_paths(config: ScreenerConfig):
+    price_frames = {
+        "GOOD1": _price_frame(320, daily_return=0.002, volume=300_000.0),
+        "GOOD2": _price_frame(320, daily_return=0.001, volume=300_000.0),
+    }
+    fundamentals = {"GOOD1": _fundamentals("GOOD1"), "GOOD2": _fundamentals("GOOD2")}
+
+    full = build_shortlist(price_frames, fundamentals, config, top_n=5)
+    momentum_only = build_momentum_only_shortlist(price_frames, config, top_n=5)
+
+    assert {entry.score_basis for entry in full.entries} == {"composite"}
+    assert {entry.score_basis for entry in momentum_only.entries} == {"rs_only"}
+    for entry in momentum_only.entries:
+        assert entry.composite_score == entry.rs_percentile
+        assert entry.f_score is None

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "nse-screener"
 version = "1.0.0"
-description = "Evidence-based NSE equity screener: momentum, quality, F-Score, forensic screen and a market gate"
+description = "Evidence-based NSE equity screener (momentum, quality, F-Score, forensic screen, market gate) plus a Palepu-sequence deep-analysis workbench (WACC/ROIC, reverse-DCF, Beneish/Altman, position sizing)"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [

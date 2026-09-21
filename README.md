@@ -34,10 +34,29 @@ Requires Python 3.11+.
 # fetch the full live NSE-listed (EQ-series) universe instead of a
 # curated list -- see Known limitations for why this is best-effort
 .venv\Scripts\python.exe -m nse_screener --full-market --top 5
+
+# log this run's shortlist for outcome tracking (see below)
+.venv\Scripts\python.exe -m nse_screener --universe universe.txt --top 5 --track tracker.jsonl
 ```
 
 Exit codes: `0` success, `1` data-integrity failure, `2` insufficient
 qualifying names, `3` configuration error.
+
+### Outcome tracking (`tracker.py`)
+
+Every backtest claim in this README came from the original design brief,
+not from independently verifying NSE data. `--track PATH` appends each
+run's shortlist (symbol, rank, entry price) to a log; once a run turns
+63 sessions old, evaluate it against real forward returns versus the
+Nifty over the identical window:
+
+```bash
+.venv\Scripts\python.exe -m nse_screener.tracker --log tracker.jsonl
+```
+
+This is the empirical, falsifiable check on whether the method actually
+works -- not a simulation, only runs that have genuinely aged past the
+holding horizon are scored.
 
 ## What each factor measures, and its evidence basis
 
@@ -127,6 +146,129 @@ f_score despite comparable underlying evidence strength.
   ranges outright. It works from an ordinary residential/office
   connection; it may not work from a hosted CI/sandbox environment.
 
+## Stage 2: deep analysis workbench
+
+Stage 1 (above) is a fully automated, systematic screen. Stage 2 is a
+**per-company deep-dive workbench** that is deliberately *not* fully
+automated: it enforces Palepu's four-step analysis sequence as a state
+machine, and three steps carry irreducible human judgment that this
+tool computes what it can for and then stops -- it never fabricates the
+judgment itself. Stage 1 never depends on Stage 2; you can run the
+workbench on any symbol, not just ones that cleared the Stage 1
+shortlist.
+
+```bash
+# the fast path: run everything computable in one command, resumable
+# across days, always ends with the full report
+.venv\Scripts\python.exe -m nse_screener.workbench run RELIANCE \
+    --context-file context_reliance.md \
+    --risk-free-rate 0.07 --equity-risk-premium 0.05 \
+    --scenarios conservative=0.04,base=0.07,optimistic=0.10
+
+# or step through it by hand:
+.venv\Scripts\python.exe -m nse_screener.workbench start RELIANCE
+.venv\Scripts\python.exe -m nse_screener.workbench context RELIANCE --file context_reliance.md
+.venv\Scripts\python.exe -m nse_screener.workbench accounting RELIANCE --reasoning "..."
+.venv\Scripts\python.exe -m nse_screener.workbench financial RELIANCE --risk-free-rate 0.07 --equity-risk-premium 0.05
+.venv\Scripts\python.exe -m nse_screener.workbench expectations RELIANCE --risk-free-rate 0.07 --equity-risk-premium 0.05
+.venv\Scripts\python.exe -m nse_screener.workbench assess RELIANCE --verdict FAIR --note "..."       # HUMAN
+.venv\Scripts\python.exe -m nse_screener.workbench value RELIANCE --scenarios conservative=0.04,base=0.07,optimistic=0.10 --risk-free-rate 0.07 --equity-risk-premium 0.05
+.venv\Scripts\python.exe -m nse_screener.workbench label RELIANCE --label INVESTMENT --justification "..."   # HUMAN
+.venv\Scripts\python.exe -m nse_screener.workbench size RELIANCE --capital 500000 --risk 0.01
+.venv\Scripts\python.exe -m nse_screener.workbench report RELIANCE
+```
+
+`--context-file` points at a plain-text file with three sections the
+analyst writes (never generated), each at least 100 characters:
+```
+INDUSTRY ECONOMICS:
+...
+
+COMPETITIVE POSITION:
+...
+
+REVENUE DRIVERS:
+- ...
+- ...
+```
+
+Only symbols listed in `data/sector_map.csv` (25 by default, matching
+`universe.txt`) can run through `accounting`/`financial`/`size`, since
+peer benchmarking and the financial-sector exclusion need a sector
+classification. Add a row there for any other symbol.
+
+### The Palepu sequence (`nse_screener/workbench/session.py`)
+
+A strict state machine -- calling a stage's function before its
+predecessor is complete raises `StageOutOfOrderError`, with no bypass:
+
+1. **Business strategy.** Human-written industry/competitive-position
+   text and revenue drivers. Cannot be computed. If never supplied, the
+   session's valid terminal state is `INCOMPLETE`, not a guess.
+2. **Accounting quality.** Combines three independent methods without
+   double-counting: the v1 forensic screen, the Beneish M-Score, and the
+   Altman Z-Score. Two of the three agreeing is what disqualifies a
+   company outright (no price is ever attached to a disqualified
+   company); any one firing alone requires a human reasoning note and
+   yields `INVESTIGATE`, not an automatic pass or fail.
+3. **Financial analysis.** ROIC (McKinsey-style: reorganized into
+   NOPAT/invested capital first), compared against a real computed WACC
+   band, plus valuation multiples.
+4. **Prospective.** A two-stage reverse-DCF solves for the growth rate
+   the current price already implies (never a forward forecast), a
+   Graham-style margin-of-safety value *range*, and ATR-based position
+   sizing. The reverse-DCF's plausibility verdict and the value range's
+   Graham label are both human-only fields -- `ANALYSIS_COMPLETE`
+   (renamed from "QUALIFIED" to avoid reading as a disguised buy signal)
+   is withheld until both are filled in.
+
+### The v3 fundamentals engine (`nse_screener/fundamentals/`)
+
+Built to make step 3/4 rigorous rather than approximate:
+
+| Module | What it does | Evidence basis |
+|---|---|---|
+| `peers.py` | Sector/peer benchmarking from a maintained `sector_map.csv`; flags financials as needing a specialist toolkit this system doesn't provide | Tracy: ratios are only meaningful compared within industry |
+| `reorganize.py` | Separates operating from non-operating items into NOPAT and invested capital | McKinsey's key-value-driver framework |
+| `wacc.py` | Real beta (2y weekly returns, Blume-adjusted) plus a sensitivity band, never a single point estimate | Beta is unstable and ERP is contested; propagate the band, not the point |
+| `roic.py` | ROIC decomposed into margin × turnover, economic spread vs. the WACC band | Value comes from growth *at* a return above cost of capital, not growth alone |
+| `distress.py` | Altman Z-Score + a liquidity/coverage family (interest coverage, net debt/EBITDA, current/acid-test/cash ratios) | A documented Beneish M-Score failure (Toshiba) was caught by Altman Z -- two independent methods, not one |
+| `multiples.py` | P/E, P/B, EV/EBITDA, EV/EBIT, EV/Sales, EV/invested capital, FCF yield, and total shareholder payout yield (dividends + buybacks) | Total payout closes the gap in dividend-only reasoning now that buybacks rival dividends as a payout channel |
+| `live_data.py` | Fetches everything above from yfinance in one pass, with documented approximations (below) |  |
+
+**Approximations `live_data.py` makes, because yfinance does not report
+the underlying line item separately for any NSE company observed:**
+`amortization_of_intangibles` is always 0 (EBITA collapses to EBIT
+exactly); `net_other_operating_assets` is always 0 (understates invested
+capital by whatever non-PPE operating assets a company carries);
+`income_continuing_ops` falls back to net income when not reported
+separately. It also does not do the fiscal-year-gap or
+unreported-placeholder detection that `data.fetch_fundamentals` does --
+it takes the two most recent common annual columns as-is.
+
+### Quarantined: busted-pattern detection (`nse_screener/experimental/`)
+
+Busted-pattern outperformance is well-evidenced elsewhere (Bulkowski,
+Grimes) but **has never been tested on NSE data**, and a closely related
+specification (O'Neil breakout) tested at zero edge on 1,253 NSE trades.
+This module is therefore quarantined: it never contributes to the v1
+composite score or shortlist, its output only ever appears under an
+"EXPERIMENTAL -- UNVALIDATED ON NSE" heading, and it raises
+`NotValidatedError` at runtime -- not just by convention -- if anything
+outside `experimental/`, the test suite, or the workbench's
+`experimental-scan` command calls into it.
+
+```bash
+.venv\Scripts\python.exe -m nse_screener.workbench experimental-scan --universe universe.txt
+.venv\Scripts\python.exe -m nse_screener.workbench validate-experimental
+```
+
+It would take 30+ matured detections showing a real edge versus a
+matched random control to release this from quarantine. With only 25
+symbols in the default universe, detections and their controls are
+drawn from heavily overlapping time windows -- not independent trials --
+so an "edge" reported today should not be trusted regardless of its sign.
+
 ## Planned upgrade path
 
 1. Replace `yfinance` price fetching with an NSE Bhavcopy adapter for an
@@ -145,6 +287,8 @@ nse_screener/
   data.py         Price/fundamentals acquisition + integrity validation
   universe.py     Live full-market (NSE EQ-series) symbol discovery
   gate.py         Market regime gate (HEALTHY / NEUTRAL / HOSTILE)
+  tracker.py      Outcome tracker: logs shortlist picks, scores real
+                  forward returns vs. the index once they mature
   factors/
     momentum.py   Relative strength
     quality.py    Gross profitability, ROE
@@ -153,9 +297,26 @@ nse_screener/
     forensic.py   Accrual/cash-flow disqualifier screen
   ranking.py      Eligibility filtering, composite scoring, shortlist
   report.py       Terminal (rich) + JSON reporting
-  cli.py          Entry point
+  cli.py          Stage 1 entry point (python -m nse_screener)
+
+  fundamentals/   Stage 2's rigor engine -- see "The v3 fundamentals engine"
+    peers.py roic.py reorganize.py wacc.py distress.py multiples.py live_data.py
+
+  workbench/      Stage 2 entry point (python -m nse_screener.workbench)
+    session.py       Palepu state machine
+    mscore.py        Beneish M-Score + combined accounting verdict
+    expectations.py  Two-stage reverse-DCF
+    valuation.py     Graham margin-of-safety value range
+    sizing.py        ATR-based position sizing, expectancy
+    __main__.py       CLI commands, incl. the one-shot `run`
+
+  experimental/   Quarantined -- see "Quarantined: busted-pattern detection"
+    busted.py validation_log.py
+
 tests/            Synthetic-fixture unit tests, no network calls
 universe.txt      Example curated watchlist
+data/sector_map.csv  Sector/industry map for peer benchmarking (25 symbols)
+sessions/         Persisted workbench sessions, one JSON per symbol/date
 ```
 
 ## Tests

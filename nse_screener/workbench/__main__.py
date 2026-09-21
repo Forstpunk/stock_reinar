@@ -12,6 +12,7 @@ import getpass
 import sys
 from datetime import datetime
 from pathlib import Path
+from typing import Callable
 
 import pandas as pd
 import yfinance as yf
@@ -49,6 +50,7 @@ from nse_screener.workbench.mscore import (
 )
 from nse_screener.workbench.session import (
     AnalysisSession,
+    AnalysisStage,
     BusinessContext,
     FinancialSummary,
     ProspectiveAnalysis,
@@ -470,6 +472,124 @@ def cmd_size(args: argparse.Namespace, console: Console) -> None:
         console.print(f"[yellow]Still missing before complete: {', '.join(missing)}[/yellow]")
 
 
+def _try_step(
+    console: Console,
+    fn: Callable[[argparse.Namespace, Console], None],
+    ns: argparse.Namespace,
+) -> bool:
+    """Run one internal cmd_* step. Returns False (after printing the error
+    cleanly) on any expected domain error, rather than aborting the whole
+    `run` and losing everything computed so far -- the point of `run` is to
+    show what's there AND what's wrong, in one pass."""
+    try:
+        fn(ns, console)
+        return True
+    except _DOMAIN_ERRORS as exc:
+        console.print(f"[bold red]{type(exc).__name__}:[/bold red] {exc}")
+        return False
+    except SystemExit:
+        return False
+
+
+def cmd_run(args: argparse.Namespace, console: Console) -> None:
+    """Run every *computable* stage in one shot, stopping cleanly the moment
+    a human judgment call is needed (or a step fails), then always printing
+    the full report of whatever was actually computed.
+
+    Resumable: stages 1-3 (business context, accounting, financial) are
+    one-shot and skipped if already done; stage 4's expectations/value are
+    freely re-runnable and always refreshed against today's live data. This
+    never fills in a plausibility verdict or a Graham label -- those stay
+    separate commands, by design.
+    """
+    console.rule(f"[bold]{args.symbol} -- computing everything computable[/bold]")
+
+    existing = sorted(SESSIONS_ROOT.glob(f"{args.symbol}_*.json"))
+    session = load_session(existing[-1]) if existing else start_session(args.symbol)
+    if not existing:
+        save_session(session, SESSIONS_ROOT)
+
+    if session.stage == AnalysisStage.BUSINESS_STRATEGY:
+        if not args.context_file:
+            console.print(
+                "[bold yellow]No business context yet, and no --context-file given.[/bold yellow] "
+                f"Run `context {args.symbol} --file ...` yourself -- this step is never "
+                "auto-generated -- then re-run `run`."
+            )
+            _print_report(console, session)
+            return
+        ok = _try_step(
+            console,
+            cmd_context,
+            argparse.Namespace(symbol=args.symbol, file=args.context_file, analyst=args.analyst),
+        )
+        session = _load_or_error(console, args.symbol)
+        if not ok:
+            _print_report(console, session)
+            return
+
+    if session.stage == AnalysisStage.ACCOUNTING_QUALITY:
+        ok = _try_step(
+            console,
+            cmd_accounting,
+            argparse.Namespace(symbol=args.symbol, reasoning=args.reasoning, analyst=args.analyst),
+        )
+        session = _load_or_error(console, args.symbol)
+        if not ok or session.terminal_state == "DISQUALIFIED":
+            _print_report(console, session)
+            return
+
+    if session.stage == AnalysisStage.FINANCIAL_ANALYSIS:
+        ok = _try_step(
+            console,
+            cmd_financial,
+            argparse.Namespace(
+                symbol=args.symbol,
+                risk_free_rate=args.risk_free_rate,
+                equity_risk_premium=args.equity_risk_premium,
+                analyst=args.analyst,
+            ),
+        )
+        session = _load_or_error(console, args.symbol)
+        if not ok:
+            _print_report(console, session)
+            return
+
+    if session.stage == AnalysisStage.PROSPECTIVE:
+        ok = _try_step(
+            console,
+            cmd_expectations,
+            argparse.Namespace(
+                symbol=args.symbol,
+                risk_free_rate=args.risk_free_rate,
+                equity_risk_premium=args.equity_risk_premium,
+                explicit_years=args.explicit_years,
+                analyst=args.analyst,
+            ),
+        )
+        session = _load_or_error(console, args.symbol)
+
+        if ok and args.scenarios:
+            _try_step(
+                console,
+                cmd_value,
+                argparse.Namespace(
+                    symbol=args.symbol,
+                    scenarios=args.scenarios,
+                    risk_free_rate=args.risk_free_rate,
+                    equity_risk_premium=args.equity_risk_premium,
+                ),
+            )
+            session = _load_or_error(console, args.symbol)
+
+    _print_report(console, session)
+
+
+def _print_report(console: Console, session: AnalysisSession) -> None:
+    console.print()
+    cmd_report(argparse.Namespace(symbol=session.symbol), console)
+
+
 def cmd_report(args: argparse.Namespace, console: Console) -> None:
     session = _load_or_error(console, args.symbol)
     console.rule(f"{args.symbol} -- {session.stage.value}")
@@ -617,6 +737,29 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("report")
     p.add_argument("symbol")
 
+    p = sub.add_parser(
+        "run",
+        help="Run every computable stage in one shot; stops cleanly where a human "
+        "judgment call is needed, then always prints the full report.",
+    )
+    p.add_argument("symbol")
+    p.add_argument(
+        "--context-file",
+        default=None,
+        help="Required only the first time, for stage 1 (business context).",
+    )
+    p.add_argument("--risk-free-rate", type=float, required=True)
+    p.add_argument("--equity-risk-premium", type=float, required=True)
+    p.add_argument("--explicit-years", type=int, default=10)
+    p.add_argument(
+        "--reasoning", default=None, help="Only needed if accounting reaches INVESTIGATE."
+    )
+    p.add_argument(
+        "--scenarios",
+        default=None,
+        help="conservative=0.04,base=0.07,optimistic=0.10 -- if omitted, stops after expectations.",
+    )
+
     p = sub.add_parser("experimental-scan")
     p.add_argument("--universe", required=True)
     p.add_argument("--log", default="data/experimental_detections.jsonl")
@@ -638,6 +781,7 @@ def main(argv: list[str] | None = None) -> int:
         "label": cmd_label,
         "size": cmd_size,
         "report": cmd_report,
+        "run": cmd_run,
         "experimental-scan": cmd_experimental_scan,
         "validate-experimental": cmd_validate_experimental,
     }

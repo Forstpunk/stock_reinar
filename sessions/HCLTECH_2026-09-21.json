@@ -1,0 +1,102 @@
+{
+  "symbol": "HCLTECH",
+  "created_at": "2026-09-21T14:59:02.260732",
+  "stage": "4_prospective",
+  "business_context": {
+    "industry_economics": "IT services is a people-scaled, contract-revenue business. Revenue comes from long-term outsourcing and project contracts. Margins depend on utilization, wage inflation versus pricing power, and the onshore/offshore delivery mix.",
+    "competitive_position": "HCLTech is one of India's largest IT services vendors, with a strategy historically more weighted toward infrastructure management and engineering services than pure application development, differentiating it somewhat from TCS and Infosys's mix.",
+    "revenue_drivers": [
+      "Large multi-year infrastructure and engineering services contracts",
+      "Growth in cloud, AI and digital engineering project work"
+    ],
+    "analyst": "Admin",
+    "entered_at": "2026-09-21T15:03:46.324039"
+  },
+  "accounting_verdict": {
+    "forensic_flags": [
+      "inventory_growth 79.7pp exceeds cogs_growth 11.8pp by more than 20.0pp"
+    ],
+    "m_score": -2.3719868958436208,
+    "m_score_band": "normal",
+    "distress_verdict": "SAFE",
+    "verdict": "CLEAN",
+    "reasoning": "routine check",
+    "analyst": "Admin",
+    "entered_at": "2026-09-21T15:03:49.131670"
+  },
+  "financial_summary": {
+    "roic_analysis": {
+      "symbol": "HCLTECH",
+      "roic": 0.435121065965013,
+      "operating_margin": 0.17650448733710353,
+      "capital_turnover": 3.272046982877719,
+      "economic_spread": 0.3211389494673754,
+      "economic_profit": 127731379342.00629,
+      "value_creating": true,
+      "spread_at_wacc_low": 0.3376871878263617,
+      "spread_at_wacc_high": 0.3006498566093161,
+      "spread_sign_uncertain": false
+    },
+    "multiples": {
+      "symbol": "HCLTECH",
+      "enterprise_value": 3444775482001.2847,
+      "market_cap": 3474745482001.2847,
+      "pe": 20.87937436606949,
+      "pe_reason": null,
+      "pb": 4.6228237637215255,
+      "pb_reason": null,
+      "ev_ebitda": 12.606219285666707,
+      "ev_ebitda_reason": null,
+      "ev_ebit": 14.996192947635212,
+      "ev_ebit_reason": null,
+      "ev_sales": 2.6468953482306405,
+      "ev_sales_reason": null,
+      "ev_invested_capital": 8.290698991191514,
+      "ev_invested_capital_reason": null,
+      "fcf_yield": 0.03958833404710838,
+      "dividend_yield": 0.042069268312511746,
+      "payout_ratio": 0.8783800024035573,
+      "payout_ratio_reason": null,
+      "total_payout_yield": 0.044115461346455914
+    },
+    "peer_percentiles": {},
+    "analyst": "Admin",
+    "entered_at": "2026-09-21T15:03:50.496809"
+  },
+  "prospective": {
+    "implied_expectations": {
+      "symbol": "HCLTECH",
+      "implied_growth_at_wacc_low": 0.10396863759630343,
+      "implied_growth_at_wacc_point": 0.13675700536705432,
+      "implied_growth_at_wacc_high": 0.17649895163190765,
+      "continuing_value_share_of_total": 0.6139749167389984,
+      "terminal_value_dominant": false,
+      "historical_revenue_cagr_3y": null,
+      "historical_revenue_cagr_5y": null,
+      "historical_nopat_cagr_3y": null,
+      "historical_nopat_cagr_5y": null,
+      "explicit_years": 10,
+      "plausibility_assessment": null,
+      "plausibility_verdict": null
+    },
+    "value_range": {
+      "symbol": "HCLTECH",
+      "per_share_values": {
+        "conservative": 796.2050920510871,
+        "base": 1231.5095693198107,
+        "optimistic": 2126.8525721748374
+      },
+      "low": 796.2050920510871,
+      "high": 2126.8525721748374,
+      "current_price": 1283.199951171875,
+      "price_position": "INSIDE_RANGE",
+      "discount_to_low": null,
+      "graham_label": null,
+      "label_justification": null
+    },
+    "position_plan": null,
+    "analyst": "Admin",
+    "entered_at": "2026-09-21T15:06:06.431954"
+  },
+  "terminal_state": null
+}

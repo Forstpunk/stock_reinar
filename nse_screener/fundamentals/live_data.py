@@ -1,12 +1,27 @@
 """Live yfinance adapter for the fields fundamentals/workbench need beyond
 ``data.FundamentalData``.
 
-Verified against real yfinance output for RELIANCE.NS and TCS.NS before
-writing any field mapping (the same evidence-first approach as every
-other data decision in this project) -- see the field lists below.
+Reuses ``data.fetch_fundamentals`` for every field it already covers
+(revenue, gross profit, net income, assets, equity, debt, current
+assets/liabilities, receivables, inventory, operating cash flow) rather
+than re-deriving them independently -- that function already handles
+inventory-absent-means-zero, the fiscal-year-gap check, and skipping
+unreported placeholder periods. An earlier version of this module
+duplicated that extraction logic with a weaker version that had none of
+those fixes, which silently cost real coverage (INFY, NESTLEIND) for no
+reason: the two statements should never have drifted apart.
 
-Three approximations are made because yfinance does not separately
-report the underlying line item for any NSE company observed:
+Only the fields ``FundamentalData`` doesn't carry are fetched separately
+here, from the exact same two periods ``fetch_fundamentals`` already
+settled on (never a different period pair -- that would make the
+combined record internally inconsistent).
+
+Verified against real yfinance output for RELIANCE.NS and TCS.NS before
+writing the field mapping for those extra fields (the same evidence-first
+approach as every other data decision in this project).
+
+Three approximations remain, because yfinance does not separately report
+the underlying line item for any NSE company observed:
 
 - ``amortization_of_intangibles`` is always 0, so EBITA collapses to
   EBIT exactly (yfinance reports EBIT directly; acquisition-related
@@ -18,22 +33,18 @@ report the underlying line item for any NSE company observed:
   carries (a real simplification, not a rounding error).
 - ``income_continuing_ops`` falls back to net income when income from
   continuing operations is not reported as a separate line.
-
-This module does not do the fiscal-year-gap or unreported-placeholder
-detection that ``data.fetch_fundamentals`` does -- it takes the two most
-recent common annual columns as-is. That is a known, smaller-scope gap
-against the live-data pipeline; the computed modules downstream still
-fail fast on genuinely missing fields.
 """
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Optional
 
 import pandas as pd
 import yfinance as yf
 from pydantic import BaseModel, ConfigDict
 
+from nse_screener.data import fetch_fundamentals
 from nse_screener.fundamentals.distress import DistressInputs
 from nse_screener.fundamentals.multiples import MultiplesInputs
 from nse_screener.fundamentals.reorganize import RawOperatingFinancials
@@ -69,59 +80,51 @@ class LiveFinancials(BaseModel):
     net_debt: float
 
 
-_INCOME_FIELDS: dict[str, list[str]] = {
-    "revenue": ["Total Revenue"],
-    "gross_profit": ["Gross Profit"],
+#: Fields not on data.FundamentalData -- fetched directly from yfinance,
+#: from the exact periods fetch_fundamentals already selected.
+_EXTRA_INCOME_FIELDS: dict[str, list[str]] = {
     "operating_income": ["EBIT", "Operating Income"],
     "ebitda": ["EBITDA"],
     "pretax_income": ["Pretax Income"],
     "tax_expense": ["Tax Provision"],
     "interest_expense": ["Interest Expense"],
     "sga_expense": ["Selling General And Administration"],
-    "net_income": ["Net Income"],
     "income_continuing_ops": [
         "Net Income From Continuing Operation Net Minority Interest",
         "Net Income",
     ],
     "depreciation_expense": ["Reconciled Depreciation"],
 }
-
-_BALANCE_FIELDS: dict[str, list[str]] = {
-    "current_assets": ["Current Assets"],
-    "current_liabilities": ["Current Liabilities"],
-    "total_assets": ["Total Assets"],
-    "total_debt": ["Total Debt"],
-    "total_equity": ["Stockholders Equity", "Total Equity Gross Minority Interest"],
-    "total_liabilities": ["Total Liabilities Net Minority Interest"],
-    "retained_earnings": ["Retained Earnings"],
+_EXTRA_BALANCE_FIELDS: dict[str, list[str]] = {
     "net_ppe": ["Net PPE"],
     "cash_and_equivalents": [
         "Cash And Cash Equivalents",
         "Cash Cash Equivalents And Short Term Investments",
     ],
     "short_term_debt": ["Current Debt", "Current Debt And Capital Lease Obligation"],
-    "accounts_receivable": ["Accounts Receivable"],
-    "inventory": ["Inventory"],
-    "shares_outstanding": ["Ordinary Shares Number"],
+    "total_liabilities": ["Total Liabilities Net Minority Interest"],
+    "retained_earnings": ["Retained Earnings"],
 }
-
-_CASHFLOW_FIELDS: dict[str, list[str]] = {
-    "operating_cash_flow": ["Operating Cash Flow"],
-}
-
-#: Lines yfinance omits entirely when the value is genuinely zero for that
-#: period (a company that did no buybacks has no "Repurchase Of Capital
-#: Stock" row at all) -- absence is read as zero, not as missing data.
-_ZERO_WHEN_ABSENT = ["Repurchase Of Capital Stock", "Issuance Of Capital Stock"]
 
 
 def fetch_live_financials(symbol: str) -> LiveFinancials:
     """Fetch and assemble every input model the fundamentals/workbench
     modules need for ``symbol``, in one pass.
 
-    Raises ``LiveDataError`` naming the missing field if any required
-    line item is absent from the two most recent common annual periods.
+    Raises ``LiveDataError`` (wrapping ``InsufficientFundamentalsError``
+    from ``data.fetch_fundamentals`` for the fields it covers) naming the
+    missing field if any required line item is absent from the two most
+    recent common annual periods.
     """
+    from nse_screener.data import InsufficientFundamentalsError
+
+    try:
+        fdata = fetch_fundamentals(symbol)
+    except InsufficientFundamentalsError as exc:
+        raise LiveDataError(symbol, str(exc)) from exc
+    if fdata.prior is None:
+        raise LiveDataError(symbol, "fewer than 2 years of fundamentals available")
+
     ticker = yf.Ticker(f"{symbol}.NS")
     income, balance, cashflow = ticker.income_stmt, ticker.balance_sheet, ticker.cashflow
     if income is None or income.empty:
@@ -131,164 +134,170 @@ def fetch_live_financials(symbol: str) -> LiveFinancials:
     if cashflow is None or cashflow.empty:
         raise LiveDataError(symbol, "cashflow unavailable")
 
-    common_periods = sorted(
-        set(income.columns) & set(balance.columns) & set(cashflow.columns), reverse=True
-    )
-    if len(common_periods) < 2:
-        raise LiveDataError(symbol, "fewer than 2 common annual periods across statements")
-
-    current_raw = _extract_period(symbol, common_periods[0], income, balance, cashflow)
-    prior_raw = _extract_period(symbol, common_periods[1], income, balance, cashflow)
+    current_period = _match_period(symbol, fdata.period_end, income)
+    prior_period = _match_period(symbol, fdata.prior.period_end, income)
+    current_extra = _extract_extra_period(symbol, current_period, income, balance, cashflow)
+    prior_extra = _extract_extra_period(symbol, prior_period, income, balance, cashflow)
 
     history = ticker.history(period="5d")
     if history is None or history.empty:
         raise LiveDataError(symbol, "no recent price history for close/market cap")
     close_price = float(history["Close"].iloc[-1])
-    shares = current_raw["shares_outstanding"]
-    market_cap = close_price * shares
-    net_debt = current_raw["total_debt"] - current_raw["cash_and_equivalents"]
+    market_cap = close_price * fdata.shares_outstanding
+    net_debt = fdata.total_debt - current_extra["cash_and_equivalents"]
 
     raw_operating = RawOperatingFinancials(
         symbol=symbol,
-        period_end=common_periods[0].date(),
-        revenue=current_raw["revenue"],
-        operating_income=current_raw["operating_income"],
+        period_end=fdata.period_end,
+        revenue=fdata.total_revenue,
+        operating_income=current_extra["operating_income"],
         amortization_of_intangibles=0.0,
-        tax_expense=current_raw["tax_expense"],
-        pretax_income=current_raw["pretax_income"],
-        current_assets=current_raw["current_assets"],
-        current_liabilities=current_raw["current_liabilities"],
-        cash_and_equivalents=current_raw["cash_and_equivalents"],
-        short_term_debt=current_raw["short_term_debt"],
-        net_ppe=current_raw["net_ppe"],
+        tax_expense=current_extra["tax_expense"],
+        pretax_income=current_extra["pretax_income"],
+        current_assets=fdata.current_assets,
+        current_liabilities=fdata.current_liabilities,
+        cash_and_equivalents=current_extra["cash_and_equivalents"],
+        short_term_debt=current_extra["short_term_debt"],
+        net_ppe=current_extra["net_ppe"],
         net_other_operating_assets=0.0,
         prior=RawOperatingFinancials(
             symbol=symbol,
-            period_end=common_periods[1].date(),
-            revenue=prior_raw["revenue"],
-            operating_income=prior_raw["operating_income"],
+            period_end=fdata.prior.period_end,
+            revenue=fdata.prior.total_revenue,
+            operating_income=prior_extra["operating_income"],
             amortization_of_intangibles=0.0,
-            tax_expense=prior_raw["tax_expense"],
-            pretax_income=prior_raw["pretax_income"],
-            current_assets=prior_raw["current_assets"],
-            current_liabilities=prior_raw["current_liabilities"],
-            cash_and_equivalents=prior_raw["cash_and_equivalents"],
-            short_term_debt=prior_raw["short_term_debt"],
-            net_ppe=prior_raw["net_ppe"],
+            tax_expense=prior_extra["tax_expense"],
+            pretax_income=prior_extra["pretax_income"],
+            current_assets=fdata.prior.current_assets,
+            current_liabilities=fdata.prior.current_liabilities,
+            cash_and_equivalents=prior_extra["cash_and_equivalents"],
+            short_term_debt=prior_extra["short_term_debt"],
+            net_ppe=prior_extra["net_ppe"],
             net_other_operating_assets=0.0,
         ),
     )
 
     mscore_inputs = MScoreInputs(
         symbol=symbol,
-        period_end=common_periods[0].date(),
-        revenue=current_raw["revenue"],
-        gross_profit=current_raw["gross_profit"],
-        accounts_receivable=current_raw["accounts_receivable"],
-        current_assets=current_raw["current_assets"],
-        net_ppe=current_raw["net_ppe"],
-        total_assets=current_raw["total_assets"],
-        depreciation_expense=current_raw["depreciation_expense"],
-        sga_expense=current_raw["sga_expense"],
-        total_debt=current_raw["total_debt"],
-        income_continuing_ops=current_raw["income_continuing_ops"],
-        operating_cash_flow=current_raw["operating_cash_flow"],
+        period_end=fdata.period_end,
+        revenue=fdata.total_revenue,
+        gross_profit=fdata.gross_profit,
+        accounts_receivable=fdata.accounts_receivable,
+        current_assets=fdata.current_assets,
+        net_ppe=current_extra["net_ppe"],
+        total_assets=fdata.total_assets,
+        depreciation_expense=current_extra["depreciation_expense"],
+        sga_expense=current_extra["sga_expense"],
+        total_debt=fdata.total_debt,
+        income_continuing_ops=current_extra["income_continuing_ops"],
+        operating_cash_flow=fdata.operating_cash_flow,
         prior=MScoreInputs(
             symbol=symbol,
-            period_end=common_periods[1].date(),
-            revenue=prior_raw["revenue"],
-            gross_profit=prior_raw["gross_profit"],
-            accounts_receivable=prior_raw["accounts_receivable"],
-            current_assets=prior_raw["current_assets"],
-            net_ppe=prior_raw["net_ppe"],
-            total_assets=prior_raw["total_assets"],
-            depreciation_expense=prior_raw["depreciation_expense"],
-            sga_expense=prior_raw["sga_expense"],
-            total_debt=prior_raw["total_debt"],
-            income_continuing_ops=prior_raw["income_continuing_ops"],
-            operating_cash_flow=prior_raw["operating_cash_flow"],
+            period_end=fdata.prior.period_end,
+            revenue=fdata.prior.total_revenue,
+            gross_profit=fdata.prior.gross_profit,
+            accounts_receivable=fdata.prior.accounts_receivable,
+            current_assets=fdata.prior.current_assets,
+            net_ppe=prior_extra["net_ppe"],
+            total_assets=fdata.prior.total_assets,
+            depreciation_expense=prior_extra["depreciation_expense"],
+            sga_expense=prior_extra["sga_expense"],
+            total_debt=fdata.prior.total_debt,
+            income_continuing_ops=prior_extra["income_continuing_ops"],
+            operating_cash_flow=fdata.prior.operating_cash_flow,
         ),
     )
 
-    working_capital = current_raw["current_assets"] - current_raw["current_liabilities"]
     distress_inputs = DistressInputs(
         symbol=symbol,
-        working_capital=working_capital,
-        total_assets=current_raw["total_assets"],
-        retained_earnings=current_raw["retained_earnings"],
-        ebit=current_raw["operating_income"],
+        working_capital=fdata.current_assets - fdata.current_liabilities,
+        total_assets=fdata.total_assets,
+        retained_earnings=current_extra["retained_earnings"],
+        ebit=current_extra["operating_income"],
         market_cap=market_cap,
-        total_liabilities=current_raw["total_liabilities"],
-        revenue=current_raw["revenue"],
-        interest_expense=current_raw["interest_expense"],
+        total_liabilities=current_extra["total_liabilities"],
+        revenue=fdata.total_revenue,
+        interest_expense=current_extra["interest_expense"],
         net_debt=net_debt,
-        ebitda=current_raw["ebitda"],
-        current_assets=current_raw["current_assets"],
-        current_liabilities=current_raw["current_liabilities"],
-        inventory=current_raw["inventory"],
-        cash_and_equivalents=current_raw["cash_and_equivalents"],
+        ebitda=current_extra["ebitda"],
+        current_assets=fdata.current_assets,
+        current_liabilities=fdata.current_liabilities,
+        inventory=fdata.inventory,
+        cash_and_equivalents=current_extra["cash_and_equivalents"],
     )
-
-    dividends_paid = abs(_lookup_or_zero(cashflow, common_periods[0], ["Cash Dividends Paid"]))
-    repurchases = abs(
-        _lookup_or_zero(cashflow, common_periods[0], ["Repurchase Of Capital Stock"])
-    )
-    issuance = _lookup_or_zero(cashflow, common_periods[0], ["Issuance Of Capital Stock"])
-    net_buybacks = repurchases - issuance
 
     multiples_inputs = MultiplesInputs(
         symbol=symbol,
-        net_income=current_raw["net_income"],
-        book_value=current_raw["total_equity"],
-        ebitda=current_raw["ebitda"],
-        ebit=current_raw["operating_income"],
-        revenue=current_raw["revenue"],
-        dividends_paid=dividends_paid,
-        net_buybacks=net_buybacks,
-        shares_outstanding=shares,
+        net_income=fdata.net_income,
+        book_value=fdata.total_equity,
+        ebitda=current_extra["ebitda"],
+        ebit=current_extra["operating_income"],
+        revenue=fdata.total_revenue,
+        dividends_paid=current_extra["dividends_paid"],
+        net_buybacks=current_extra["net_buybacks"],
+        shares_outstanding=fdata.shares_outstanding,
     )
 
     return LiveFinancials(
         symbol=symbol,
         close_price=close_price,
-        shares_outstanding=shares,
+        shares_outstanding=fdata.shares_outstanding,
         raw_operating=raw_operating,
         mscore_inputs=mscore_inputs,
         distress_inputs=distress_inputs,
         multiples_inputs=multiples_inputs,
-        interest_expense=current_raw["interest_expense"],
-        total_debt=current_raw["total_debt"],
-        prior_total_debt=prior_raw["total_debt"],
+        interest_expense=current_extra["interest_expense"],
+        total_debt=fdata.total_debt,
+        prior_total_debt=fdata.prior.total_debt,
         net_debt=net_debt,
     )
 
 
-def _extract_period(
+def _match_period(symbol: str, target: date, income: pd.DataFrame) -> pd.Timestamp:
+    """Find the income-statement column matching the period fetch_fundamentals
+    already selected -- balance/cashflow are looked up with the same
+    Timestamp, since fetch_fundamentals only accepts periods common to
+    all three statements."""
+    for period in income.columns:  # yfinance columns are Timestamps; stubs type them as str.
+        if period.date() == target:  # type: ignore[attr-defined]
+            return period  # type: ignore[return-value]
+    raise LiveDataError(symbol, f"no income statement period matching {target} found")
+
+
+def _extract_extra_period(
     symbol: str,
     period: pd.Timestamp,
     income: pd.DataFrame,
     balance: pd.DataFrame,
     cashflow: pd.DataFrame,
 ) -> dict[str, float]:
-    frames_by_field: dict[str, tuple[pd.DataFrame, list[str]]] = {
-        **{f: (income, labels) for f, labels in _INCOME_FIELDS.items()},
-        **{f: (balance, labels) for f, labels in _BALANCE_FIELDS.items()},
-        **{f: (cashflow, labels) for f, labels in _CASHFLOW_FIELDS.items()},
-    }
-
     values: dict[str, float] = {}
     missing: list[str] = []
-    for field, (frame, labels) in frames_by_field.items():
-        value = _lookup(frame, period, labels)
+    for field, labels in _EXTRA_INCOME_FIELDS.items():
+        value = _lookup(income, period, labels)
         if value is None:
             missing.append(field)
         else:
             values[field] = value
-
+    for field, labels in _EXTRA_BALANCE_FIELDS.items():
+        value = _lookup(balance, period, labels)
+        if value is None:
+            missing.append(field)
+        else:
+            values[field] = value
     if missing:
         raise LiveDataError(
             symbol, f"missing required field(s) for {period.date()}: {', '.join(missing)}"
         )
+
+    # A company that did no buybacks/paid no dividend that period has no
+    # such row at all -- absence is read as zero, not as missing data,
+    # same convention as data.fetch_fundamentals uses for inventory.
+    values["dividends_paid"] = abs(_lookup_or_zero(cashflow, period, ["Cash Dividends Paid"]))
+    repurchases = abs(_lookup_or_zero(cashflow, period, ["Repurchase Of Capital Stock"]))
+    issuance = _lookup_or_zero(cashflow, period, ["Issuance Of Capital Stock"])
+    values["net_buybacks"] = repurchases - issuance
+
     return values
 
 

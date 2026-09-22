@@ -192,10 +192,21 @@ REVENUE DRIVERS:
 - ...
 ```
 
-Only symbols listed in `data/sector_map.csv` (25 by default, matching
-`universe.txt`) can run through `accounting`/`financial`/`size`, since
-peer benchmarking and the financial-sector exclusion need a sector
-classification. Add a row there for any other symbol.
+Only symbols listed in `data/sector_map.csv` (500 by default, the Nifty
+500 constituents as published by NSE) can run through
+`accounting`/`financial`/`size`, since peer benchmarking and the
+financial-sector exclusion need a sector classification. Add a row
+there for any other symbol.
+
+The 25 symbols originally hand-curated for this file (matching
+`universe.txt`) have a finer-grained `industry` value (e.g. `Private
+Sector Bank`, `Passenger Vehicles`). The other ~475, bulk-loaded from
+NSE's `ind_nifty500list.csv`, only carry one classification level, so
+`sector` and `industry` are identical for those rows -- peer
+benchmarking for them compares within the broader sector (e.g. all of
+`Financial Services`), not a narrower peer group. `sector` alone drives
+the financial-sector exclusion (`SPECIALIST_SECTORS` in `peers.py`), so
+that check is unaffected either way.
 
 ### The Palepu sequence (`nse_screener/workbench/session.py`)
 
@@ -315,7 +326,7 @@ nse_screener/
 
 tests/            Synthetic-fixture unit tests, no network calls
 universe.txt      Example curated watchlist
-data/sector_map.csv  Sector/industry map for peer benchmarking (25 symbols)
+data/sector_map.csv  Sector/industry map for peer benchmarking (500 symbols, Nifty 500)
 sessions/         Persisted workbench sessions, one JSON per symbol/date
 ```
 

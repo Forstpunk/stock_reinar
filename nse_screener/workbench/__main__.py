@@ -230,9 +230,13 @@ def cmd_context(args: argparse.Namespace, console: Console) -> None:
 def cmd_accounting(args: argparse.Namespace, console: Console) -> None:
     session = _load_or_error(console, args.symbol)
     sector = _sector_info(args.symbol)
-    lf = fetch_live_financials(args.symbol)
 
     if sector.requires_specialist_analysis:
+        # Checked before any live fetch: a financial-sector company's
+        # statements don't have the fields fetch_live_financials needs
+        # (gross_profit, operating_income, current_assets, ...), so
+        # fetching first would only fail with a confusing "missing
+        # fields" error instead of this clear, immediate explanation.
         console.print(
             f"[bold red]{args.symbol} is a financial-sector company.[/bold red] The forensic "
             "screen, M-Score and Z-score are not defined for it -- accounting quality here "
@@ -240,6 +244,7 @@ def cmd_accounting(args: argparse.Namespace, console: Console) -> None:
         )
         raise SystemExit(1)
 
+    lf = fetch_live_financials(args.symbol)
     fdata = fetch_fundamentals(args.symbol)
     if fdata.prior is None:
         raise SystemExit(f"{args.symbol}: fewer than 2 years of fundamentals available")

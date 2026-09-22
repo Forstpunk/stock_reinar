@@ -66,10 +66,10 @@
   "prospective": {
     "implied_expectations": {
       "symbol": "HCLTECH",
-      "implied_growth_at_wacc_low": 0.10368412238225386,
-      "implied_growth_at_wacc_point": 0.1364553523843593,
-      "implied_growth_at_wacc_high": 0.17617831239721976,
-      "continuing_value_share_of_total": 0.6134584340701009,
+      "implied_growth_at_wacc_low": 0.10147540365521232,
+      "implied_growth_at_wacc_point": 0.13412725625482724,
+      "implied_growth_at_wacc_high": 0.17371640119547804,
+      "continuing_value_share_of_total": 0.6093215627512824,
       "terminal_value_dominant": false,
       "historical_revenue_cagr_3y": null,
       "historical_revenue_cagr_5y": null,
@@ -82,13 +82,13 @@
     "value_range": {
       "symbol": "HCLTECH",
       "per_share_values": {
-        "conservative": 896.2173254478895,
-        "base": 1369.887843944147,
-        "optimistic": 2128.5787391033473
+        "conservative": 797.5114029102954,
+        "base": 1234.9292008571986,
+        "optimistic": 2137.751212963145
       },
-      "low": 896.2173254478895,
-      "high": 2128.5787391033473,
-      "current_price": 1281.0,
+      "low": 797.5114029102954,
+      "high": 2137.751212963145,
+      "current_price": 1263.4000244140625,
       "price_position": "INSIDE_RANGE",
       "discount_to_low": null,
       "unstable_scenarios": [],
@@ -97,7 +97,7 @@
     },
     "position_plan": null,
     "analyst": "Admin",
-    "entered_at": "2026-09-21T15:27:34.142887"
+    "entered_at": "2026-09-22T13:04:53.196663"
   },
   "terminal_state": null
 }

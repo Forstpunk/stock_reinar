@@ -181,3 +181,28 @@ def test_workbench_experimental_cli_is_sanctioned():
     # __name__ == "__main__" but __spec__.name naming the workbench: the
     # labelled EXPERIMENTAL command that feeds the validation log.
     _exec_as("__main__", spec_name="nse_screener.workbench.__main__")
+
+
+# -- Regression: detection_date must be the confirmation date, not the ---------
+# -- breakout date, or forward-return scoring re-measures an already-known -----
+# -- recovery (lookahead bias). See _build_detection_entry's docstring. --------
+
+
+def test_logged_detection_date_is_confirmation_not_breakout():
+    from nse_screener.workbench.__main__ import _build_detection_entry
+
+    tail = [103.0] * 22
+    closes = _series(_PATTERN_WINDOW + _BREAKOUT_AND_CONFIRM + tail)
+    patterns = detect_busted_patterns(
+        "AAA", closes, lookback=20, pattern_window=10, bust_threshold=0.05
+    )
+    p = patterns[0]
+    assert p.breakout_date != p.bust_confirmation_date  # the fixture must exercise this
+
+    entry = _build_detection_entry("AAA", closes, p, "HEALTHY")
+
+    assert entry.detection_date == p.bust_confirmation_date
+    assert entry.detection_date != p.breakout_date
+    assert entry.price_at_detection == pytest.approx(
+        float(closes.loc[pd.Timestamp(p.bust_confirmation_date)])
+    )

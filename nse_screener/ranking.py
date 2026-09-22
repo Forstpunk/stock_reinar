@@ -119,11 +119,29 @@ def build_shortlist(
     for symbol in eligible_symbols:
         fdata = fundamentals[symbol]
         last_close = float(price_frames[symbol]["Close"].iloc[-1])
-        f_scores[symbol] = piotroski_f_score(fdata, fdata.prior)  # type: ignore[arg-type]
-        gp_values[symbol] = gross_profitability(fdata)
-        roe_values[symbol] = return_on_equity(fdata)
-        ey_values[symbol] = earnings_yield(fdata, last_close)
-        btp_values[symbol] = book_to_price(fdata, last_close)
+        # Each factor can legitimately raise on a real, non-erroneous
+        # financial state (e.g. negative book equity at a heavily leveraged
+        # infra name) -- one such symbol must not crash a multi-hundred-name
+        # screen. Assigned atomically per symbol so the five dicts below
+        # never end up with a partially-computed entry for a failed symbol.
+        try:
+            f_score = piotroski_f_score(fdata, fdata.prior)  # type: ignore[arg-type]
+            gp = gross_profitability(fdata)
+            roe = return_on_equity(fdata)
+            ey = earnings_yield(fdata, last_close)
+            btp = book_to_price(fdata, last_close)
+        except ValueError:
+            excluded_count["factor_computation_failed"] += 1
+            continue
+        f_scores[symbol] = f_score
+        gp_values[symbol] = gp
+        roe_values[symbol] = roe
+        ey_values[symbol] = ey
+        btp_values[symbol] = btp
+
+    eligible_symbols = [s for s in eligible_symbols if s in f_scores]
+    if not eligible_symbols:
+        return _finalise([], top_n, excluded_count, disqualified, fundamentals_included=True)
 
     f_score_series = pd.Series({s: f_scores[s].total_score for s in eligible_symbols})
     gp_series = pd.Series(gp_values)

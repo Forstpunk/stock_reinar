@@ -20,7 +20,7 @@ from rich.console import Console
 from rich.table import Table
 
 from nse_screener.data import fetch_fundamentals, fetch_price_history, validate_price_data
-from nse_screener.experimental.busted import detect_busted_patterns
+from nse_screener.experimental.busted import BustedPattern, detect_busted_patterns
 from nse_screener.experimental.validation_log import (
     DetectionLogEntry,
     load_detections,
@@ -648,6 +648,39 @@ def cmd_report(args: argparse.Namespace, console: Console) -> None:
         console.print(f"[bold red]ANALYSIS INCOMPLETE[/bold red] -- missing: {', '.join(missing)}")
 
 
+def _build_detection_entry(
+    symbol: str, frame_close: "pd.Series", pattern: BustedPattern, gate_verdict: str
+) -> DetectionLogEntry:
+    """Build the forward-validation log entry for one confirmed busted pattern.
+
+    ``detection_date`` must be ``bust_confirmation_date``, not
+    ``breakout_date``: a pattern is only ever returned by
+    ``detect_busted_patterns`` once its recovery has already happened
+    (that recovery is what ``bust_confirmed`` means), so logging
+    ``breakout_date`` as the entry point back-dates the entry to before
+    the outcome was knowable -- forward-return scoring from there
+    re-measures a move that already occurred, which is lookahead bias,
+    not a real forward test.
+
+    ``gate_verdict`` reflects the market gate at scan time, not as of
+    this historical date -- like ``price_at_detection``, this is
+    metadata only: ``score_open_detections`` never reads either field,
+    it re-derives both from price history by date.
+    """
+    confirmation_date = pattern.bust_confirmation_date
+    assert confirmation_date is not None  # always set when bust_confirmed
+    return DetectionLogEntry(
+        symbol=symbol,
+        detection_date=confirmation_date,
+        price_at_detection=float(frame_close.loc[pd.Timestamp(confirmation_date)]),
+        gate_verdict_at_detection=gate_verdict,
+        pattern_metadata={
+            "bust_type": pattern.bust_type,
+            "sessions_elapsed": pattern.sessions_elapsed,
+        },
+    )
+
+
 def cmd_experimental_scan(args: argparse.Namespace, console: Console) -> None:
     console.print("[bold yellow]EXPERIMENTAL -- UNVALIDATED ON NSE[/bold yellow]")
     symbols = [s.strip() for s in Path(args.universe).read_text().splitlines() if s.strip()]
@@ -664,13 +697,7 @@ def cmd_experimental_scan(args: argparse.Namespace, console: Console) -> None:
     for symbol, frame in price_frames.items():
         patterns = detect_busted_patterns(symbol, frame["Close"])
         for p in patterns:
-            entry = DetectionLogEntry(
-                symbol=symbol,
-                detection_date=p.breakout_date,
-                price_at_detection=float(frame["Close"].iloc[-1]),
-                gate_verdict_at_detection=gate.verdict.value,
-                pattern_metadata={"bust_type": p.bust_type, "sessions_elapsed": p.sessions_elapsed},
-            )
+            entry = _build_detection_entry(symbol, frame["Close"], p, gate.verdict.value)
             log_detection(entry, log_path)
             total += 1
     console.print(f"{total} detection(s) logged to {log_path}")

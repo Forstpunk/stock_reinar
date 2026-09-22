@@ -185,6 +185,26 @@ def test_all_symbols_momentum_uncomputable_gives_empty_shortlist(config: Screene
     assert shortlist.shortfall_note is not None
 
 
+def test_one_negative_equity_symbol_is_excluded_not_fatal(config: ScreenerConfig):
+    # Regression: a real full-market run (GMRAIRPORT, negative average book
+    # equity from heavy leverage) crashed build_shortlist entirely with an
+    # uncaught ValueError from return_on_equity. One legitimate real-world
+    # financial state on one symbol must not take down the whole screen.
+    price_frames = {
+        "GOOD": _price_frame(320, daily_return=0.002, volume=300_000.0),
+        "NEGEQUITY": _price_frame(320, daily_return=0.002, volume=300_000.0),
+    }
+    fundamentals = {
+        "GOOD": _fundamentals("GOOD"),
+        "NEGEQUITY": _fundamentals("NEGEQUITY", {"total_equity": -700.0}),
+    }
+
+    shortlist = build_shortlist(price_frames, fundamentals, config, top_n=5)
+
+    assert [entry.symbol for entry in shortlist.entries] == ["GOOD"]
+    assert shortlist.excluded_count["factor_computation_failed"] == 1
+
+
 def test_momentum_only_path_excludes_uncomputable_symbol(config: ScreenerConfig):
     price_frames = {"GOOD": _sparse_close_frame(400), "THIN": _sparse_close_frame(200)}
 

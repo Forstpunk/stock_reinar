@@ -1,0 +1,31 @@
+{
+  "horizons": [
+    21,
+    63,
+    126
+  ],
+  "high_leverage": {
+    "group": "high_leverage",
+    "n": 124,
+    "mean_forward_return_pct": {
+      "21": 4.38370529370712,
+      "63": 7.115938491333225,
+      "126": 5.734273675721999
+    },
+    "mean_debt_to_equity": 0.9641482453576165,
+    "mean_roic": 0.21240940055240307
+  },
+  "low_leverage": {
+    "group": "low_leverage",
+    "n": 123,
+    "mean_forward_return_pct": {
+      "21": 3.0787828977576615,
+      "63": 5.763651849723401,
+      "126": 9.557367483034458
+    },
+    "mean_debt_to_equity": 0.033211521714802364,
+    "mean_roic": 0.5119413013316804
+  },
+  "excluded": {},
+  "roic_note": "ROIC is each symbol's current filing via fetch_live_financials, not the historical vintage used for the ROE split -- a live cross-reference, not a per-vintage match."
+}

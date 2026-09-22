@@ -83,6 +83,42 @@ class ScreenerConfig(BaseModel):
     # and roe were trimmed to make room, roe more so since it is the most
     # redundant of the four with gross_profitability (both are "quality"
     # proxies) rather than an independent signal.
+    #
+    # Backtest 2026-09-22 (data/factor_backtest_2026-09-22.json), 63-session
+    # horizon, with the CI and effective_n context a bare point estimate
+    # hides -- a rank IC or Q5-Q1 spread alone is not evidence, see
+    # factor_backtest.py's module docstring:
+    #   momentum              rank IC +0.057, CI [+0.043,+0.073] excludes zero,
+    #                         effective_n=117 (350 as-of dates, 1996-2026,
+    #                         period="max")  (weight 0.35)
+    #   gross_profitability   rank IC +0.135, CI [+0.054,+0.173] excludes zero,
+    #                         Q5-Q1 +6.29pp, CI [+2.14,+8.30]pp  (weight 0.15)
+    #   f_score               rank IC +0.054, CI [-0.015,+0.096] SPANS ZERO;
+    #                         Q5-Q1 +3.20pp, CI [+0.46,+7.59]pp excludes zero
+    #                         and monotonic -- the spread is the stronger
+    #                         evidence here, not the rank IC  (weight 0.20)
+    #   book_to_price         rank IC -0.018, Q5-Q1 +1.29pp, both CIs span
+    #                         zero  (part of 0.20 value)
+    #   earnings_yield        rank IC -0.006, Q5-Q1 -0.11pp, both CIs span
+    #                         zero  (part of 0.20 value)
+    #   roe                   rank IC +0.043, Q5-Q1 -0.89pp, both CIs span
+    #                         zero, largest_single_step_share 4.8 (one
+    #                         quintile-boundary jump nearly 5x the total
+    #                         spread) -- the "leverage contradiction" flagged
+    #                         in an earlier pass is NOT confirmed once
+    #                         uncertainty is quantified; it reads as noise
+    #                         from only 12 as-of dates, not a settled
+    #                         leverage artifact. See data/roe_diagnostic_*.json
+    #                         for the leverage-split check.  (weight 0.10)
+    # f_score/gross_profitability/roe/earnings_yield/book_to_price all carry
+    # overlap_warning=True (effective_n == n_as_of_dates == 12): this ceiling
+    # is structural (~3 real annual filings per symbol), not fixable by
+    # rerunning. Momentum's sample is now large and CI-confirmed; the
+    # fundamentals factors are not, and Do NOT reweight on 12 as-of dates --
+    # that is fitting to noise, no matter how large the point estimate looks.
+    # Run `python -m nse_screener.factor_backtest` again periodically and
+    # compare against the dated snapshot to check whether an edge holds up
+    # or erodes as more as-of dates accumulate for momentum specifically.
     weight_rs: float = 0.35
     weight_f_score: float = 0.20
     weight_value: float = 0.20

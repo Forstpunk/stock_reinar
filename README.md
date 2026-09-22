@@ -81,6 +81,59 @@ this composite is unvalidated -- see the comment on the `weight_*` fields in
 `config.py` for the full reasoning, including why value sits below rs and
 f_score despite comparable underlying evidence strength.
 
+### Point-in-time factor backtests (`nse_screener/factor_backtest.py`)
+
+The table above cites external, mostly non-NSE literature. This module
+answers the same question with this project's own real NSE history
+instead, at two different rigor levels that must never be blurred
+together:
+
+- **Momentum** is pure price data with no restatement risk, so it gets a
+  genuine walk-forward backtest: price history is truncated at each
+  historical as-of date, the live screener's own
+  `weighted_relative_strength` computes the score from that truncated
+  view only, and the forward return is looked up from data that did not
+  exist yet at computation time. Run with `period="max"` price history
+  (back to 1996 for large caps) to maximise the as-of date count.
+- **F-Score, gross profitability, ROE and value** cannot be backtested
+  this way: yfinance keeps no point-in-time fundamentals archive, only
+  ~4 stored annual filings per symbol. Instead, each symbol's ~3
+  successive real annual filings are used as their own (current, prior)
+  pairs, dated `REPORTING_LAG_DAYS` (75 days) after fiscal year-end as a
+  conservative stand-in for when that filing actually became public.
+  This is a structural ceiling on sample size that cannot be raised
+  without a vintage fundamentals data source — unlike momentum's as-of
+  range, which is just a data-fetch choice.
+
+**Reading the output — three numbers matter more than the headline
+statistic:**
+
+- `effective_n`, not `n_observations`. Forward-return windows from
+  as-of dates closer together than the horizon overlap almost
+  completely and are not independent draws; `n_observations` counts
+  every row, `effective_n` estimates how many of those rows are
+  actually independent once overlap is accounted for.
+  `overlap_warning: true` means `effective_n` is below 30 — treat the
+  result as under-powered, not as a finding.
+- The 95% confidence interval (`rank_ic_ci_95`, `q5_minus_q1_ci_95`),
+  bootstrapped by resampling whole as-of dates (never individual rows —
+  rows sharing an as-of date share a market regime and are not
+  independent). **A wide interval, or one that spans zero
+  (`spans_zero: true`), means "unknown", not "zero".** Do not read an
+  interval that includes zero as proof a factor has no edge; it means
+  this sample cannot yet tell the difference between an edge and noise.
+- `spearman_quintile_monotonicity` and `largest_single_step_share`. A
+  large Q5-Q1 spread can be driven by a single quintile-boundary
+  outlier rather than genuine ordering across the whole range;
+  `largest_single_step_share` near 1.0 is the signal to distrust a
+  large spread as broad-based evidence.
+
+Run it with `python -m nse_screener.factor_backtest [--universe PATH]
+[--diagnose-roe]`. The dated snapshot it writes to `data/` is a
+baseline: re-running periodically and diffing against it is how you
+check whether a factor's edge is holding up or eroding, not a one-time
+verdict.
+
 ## Constraints this tool enforces, and why
 
 - **Minimum holding horizon: 63 sessions (~3 months), printed every run,
@@ -233,6 +286,24 @@ predecessor is complete raises `StageOutOfOrderError`, with no bypass:
    (renamed from "QUALIFIED" to avoid reading as a disguised buy signal)
    is withheld until both are filled in.
 
+Stage 4 is freely re-runnable and always refreshes against today's
+price, so `expectations`/`value` (and therefore `run`) decide whether a
+judgment you already recorded still applies to the new numbers. A
+verdict or label is **carried forward only while it is an answer to the
+same question**, and the run says which happened either way:
+
+| Judgment | Carried forward while | Dropped when |
+|---|---|---|
+| `plausibility_verdict` | same `--explicit-years`, and implied growth at the WACC point moved ≤ 1.0pp | the horizon changed, or growth moved further -- LOW/FAIR/HEROIC is then a verdict on a different number |
+| `graham_label` | same scenario names, same `price_position`, and every per-share value and the price moved ≤ 2% | any of those changed -- the label asserts safety of principal *at a price*, and that margin has moved |
+
+Both tolerances live in `workbench/session.py`
+(`PLAUSIBILITY_CARRY_FORWARD_TOLERANCE_PP`,
+`GRAHAM_LABEL_CARRY_FORWARD_TOLERANCE`) with the reasoning for each
+value. A dropped judgment reappears in `missing_requirements`, so the
+session drops back out of `ANALYSIS_COMPLETE` until you re-`assess` or
+re-`label` it -- it is never silently kept and never silently discarded.
+
 ### The v3 fundamentals engine (`nse_screener/fundamentals/`)
 
 Built to make step 3/4 rigorous rather than approximate:
@@ -343,6 +414,19 @@ The same three commands run in CI (`.github/workflows/ci.yml`) on Python
 
 ## Known issues fixed in this revision
 
+- **Re-running stage 4 silently erased the analyst's own judgments.**
+  `expectations` rebuilt `implied_expectations` from scratch and `value`
+  replaced `value_range` wholesale, so a recorded `plausibility_verdict`
+  or `graham_label` was discarded with no message -- and because `run`
+  calls both, the ordinary `assess` → `run` → `label` → `run` workflow
+  wiped the very judgments the workbench exists to collect. A session
+  that had reached `ANALYSIS_COMPLETE` quietly fell back to incomplete.
+  Judgments are now carried forward when the numbers they were made
+  about have not materially moved, and explicitly dropped *with a
+  printed reason* when they have -- see the table under "The Palepu
+  sequence". **If you ran earlier revisions, check any session whose
+  `terminal_state` is not `ANALYSIS_COMPLETE` for a verdict or label you
+  thought you had already recorded.**
 - **Forensic screen was disqualifying healthy asset-light companies.** A
   ratio that was *undefined* (zero denominator: no debt, no inventory, zero
   net income) was being counted as a forensic flag. A debt-free,
